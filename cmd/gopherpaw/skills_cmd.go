@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/suifei/gopherpaw/internal/config"
 	"github.com/suifei/gopherpaw/internal/skills"
@@ -54,14 +55,15 @@ func runSkillsList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	workingDir := config.ResolveWorkingDir(cfg.WorkingDir)
+	configDir := filepath.Dir(cfgPath)
 	mgr := skills.NewManager()
-	if err := mgr.LoadSkills(workingDir, cfg.Skills); err != nil {
+	if err := mgr.LoadSkills(workingDir, configDir, cfg.Skills); err != nil {
 		return err
 	}
 	enabled := mgr.GetEnabledSkills()
 	if len(enabled) == 0 {
 		fmt.Println("无已加载的 Skills")
-		fmt.Printf("请在 %s 下创建 active_skills/<name>/SKILL.md 或 customized_skills/<name>/SKILL.md\n", workingDir)
+		fmt.Printf("请在 %s 或 %s 下创建 active_skills/<name>/SKILL.md\n", workingDir, configDir)
 		return nil
 	}
 	for _, s := range enabled {
@@ -101,8 +103,9 @@ func runSkillsImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	workingDir := config.ResolveWorkingDir(cfg.WorkingDir)
+	configDir := filepath.Dir(cfgPath)
 	mgr := skills.NewManager()
-	if err := mgr.LoadSkills(workingDir, cfg.Skills); err != nil {
+	if err := mgr.LoadSkills(workingDir, configDir, cfg.Skills); err != nil {
 		return err
 	}
 	name, err := mgr.ImportFromURL(context.Background(), args[0], workingDir, cfg.Skills)

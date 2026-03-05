@@ -38,17 +38,31 @@ func NewManager() *Manager {
 	}
 }
 
-// LoadSkills loads SKILL.md files from active_dir and customized_dir under workingDir.
-func (m *Manager) LoadSkills(workingDir string, cfg config.SkillsConfig) error {
+// LoadSkills loads SKILL.md files from active_dir and customized_dir under
+// both workingDir (user data, e.g. ~/.gopherpaw/) and configDir (config file
+// location, for built-in skills). Duplicate paths are skipped automatically.
+func (m *Manager) LoadSkills(workingDir string, configDir string, cfg config.SkillsConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.skills = make(map[string]*Skill)
 
-	dirs := []string{
+	candidates := []string{
 		filepath.Join(workingDir, cfg.ActiveDir),
 		filepath.Join(workingDir, cfg.CustomizedDir),
+		filepath.Join(configDir, cfg.ActiveDir),
+		filepath.Join(configDir, cfg.CustomizedDir),
 	}
-	for _, dir := range dirs {
+
+	seen := make(map[string]bool, len(candidates))
+	for _, dir := range candidates {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			abs = dir
+		}
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
 		if err := m.loadFromDir(dir); err != nil {
 			return fmt.Errorf("load from %s: %w", dir, err)
 		}
@@ -203,6 +217,164 @@ func deriveSkillNameFromURL(url string) string {
 		}
 	}
 	return "imported"
+}
+
+// ListAllSkills returns all loaded skills (enabled and disabled).
+func (m *Manager) ListAllSkills() []Skill {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Skill, 0, len(m.skills))
+	for _, s := range m.skills {
+		out = append(out, *s)
+	}
+	return out
+}
+
+// GetSkill returns a skill by name, or nil if not found.
+func (m *Manager) GetSkill(name string) *Skill {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, ok := m.skills[name]; ok {
+		cp := *s
+		return &cp
+	}
+	return nil
+}
+
+// CreateSkill creates a new skill with the given name and content in the customized_skills directory.
+func (m *Manager) CreateSkill(workingDir string, cfg config.SkillsConfig, name string, description string, content string) error {
+	if name == "" {
+		return fmt.Errorf("skill name cannot be empty")
+	}
+
+	skillDir := filepath.Join(workingDir, cfg.CustomizedDir, name)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("---\n")
+	sb.WriteString(fmt.Sprintf("name: %s\n", name))
+	if description != "" {
+		sb.WriteString(fmt.Sprintf("description: %s\n", description))
+	}
+	sb.WriteString("---\n\n")
+	sb.WriteString(content)
+
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte(sb.String()), 0644); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sk, err := loadSkill(skillPath)
+	if err != nil {
+		return fmt.Errorf("parse created skill: %w", err)
+	}
+	sk.Enabled = true
+	m.skills[sk.Name] = sk
+	return nil
+}
+
+// DeleteSkill removes a skill by name from the manager and optionally from disk.
+func (m *Manager) DeleteSkill(name string, removeFromDisk bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sk, ok := m.skills[name]
+	if !ok {
+		return fmt.Errorf("skill %q not found", name)
+	}
+
+	if removeFromDisk && sk.Path != "" {
+		dir := filepath.Dir(sk.Path)
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove skill dir: %w", err)
+		}
+	}
+
+	delete(m.skills, name)
+	return nil
+}
+
+// SyncSkillsToWorkingDir copies built-in skills from configDir to workingDir
+// if they don't already exist there.
+func (m *Manager) SyncSkillsToWorkingDir(workingDir string, configDir string, cfg config.SkillsConfig) error {
+	srcDir := filepath.Join(configDir, cfg.ActiveDir)
+	dstDir := filepath.Join(workingDir, cfg.ActiveDir)
+
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read source dir: %w", err)
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		srcSkill := filepath.Join(srcDir, e.Name(), "SKILL.md")
+		if _, err := os.Stat(srcSkill); os.IsNotExist(err) {
+			continue
+		}
+
+		dstSkill := filepath.Join(dstDir, e.Name(), "SKILL.md")
+		if _, err := os.Stat(dstSkill); err == nil {
+			continue // already exists
+		}
+
+		data, err := os.ReadFile(srcSkill)
+		if err != nil {
+			continue
+		}
+
+		dstSkillDir := filepath.Join(dstDir, e.Name())
+		if err := os.MkdirAll(dstSkillDir, 0755); err != nil {
+			continue
+		}
+		if err := os.WriteFile(dstSkill, data, 0644); err != nil {
+			continue
+		}
+	}
+	return nil
+}
+
+// ListAvailableSkills returns names of all skills found in the given directories
+// (both enabled and not yet loaded).
+func (m *Manager) ListAvailableSkills(workingDir string, configDir string, cfg config.SkillsConfig) []string {
+	dirs := []string{
+		filepath.Join(workingDir, cfg.ActiveDir),
+		filepath.Join(workingDir, cfg.CustomizedDir),
+		filepath.Join(configDir, cfg.ActiveDir),
+		filepath.Join(configDir, cfg.CustomizedDir),
+	}
+
+	seen := make(map[string]bool)
+	var names []string
+
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			skillPath := filepath.Join(dir, e.Name(), "SKILL.md")
+			if _, err := os.Stat(skillPath); os.IsNotExist(err) {
+				continue
+			}
+			if !seen[e.Name()] {
+				seen[e.Name()] = true
+				names = append(names, e.Name())
+			}
+		}
+	}
+	return names
 }
 
 // GetSystemPromptAddition returns concatenated content of all enabled skills.

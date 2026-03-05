@@ -103,6 +103,16 @@ func HandleMagicCommand(ctx context.Context, memory MemoryStore, chatID string, 
 		}
 		return "switch-model 功能未配置。", true, nil
 
+	case "/await_summary":
+		summary, err := memory.GetCompactSummary(ctx, chatID)
+		if err != nil {
+			return "", true, fmt.Errorf("await summary: %w", err)
+		}
+		if summary == "" {
+			return "当前无待处理的摘要。正在生成...", true, nil
+		}
+		return fmt.Sprintf("摘要内容:\n%s", summary), true, nil
+
 	case "/daemon":
 		if daemonInfo == nil {
 			return "daemon 信息不可用。", true, nil

@@ -3,6 +3,8 @@ package channels
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,7 +99,7 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 			Metadata:  meta,
 		}
 		if c.onMsg != nil {
-			runCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			runCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 			defer cancel()
 			if err := c.onMsg(runCtx, "discord", msg); err != nil {
 				logger.L().Warn("discord onMsg failed", zap.Error(err))
@@ -135,6 +137,49 @@ func (c *DiscordChannel) Stop(ctx context.Context) error {
 		return ctx.Err()
 	}
 	return nil
+}
+
+// SendFile sends a file to the given Discord channel.
+func (c *DiscordChannel) SendFile(ctx context.Context, to string, filePath string, mimeType string, meta map[string]string) error {
+	if !c.IsEnabled() || c.session == nil {
+		return nil
+	}
+	channelID := ""
+	userID := ""
+	if meta != nil {
+		channelID = meta["channel_id"]
+		userID = meta["user_id"]
+	}
+	if channelID == "" && to != "" {
+		if strings.HasPrefix(to, "dm:") {
+			userID = strings.TrimPrefix(to, "dm:")
+		} else {
+			channelID = to
+		}
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	fileName := filepath.Base(filePath)
+	files := []*discordgo.File{{Name: fileName, Reader: f}}
+
+	if channelID != "" {
+		_, err := c.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{Files: files})
+		return err
+	}
+	if userID != "" {
+		ch, err := c.session.UserChannelCreate(userID)
+		if err != nil {
+			return fmt.Errorf("discord create dm: %w", err)
+		}
+		_, err = c.session.ChannelMessageSendComplex(ch.ID, &discordgo.MessageSend{Files: files})
+		return err
+	}
+	return fmt.Errorf("discord send file: need channel_id or user_id in meta")
 }
 
 // Send sends a text message. Uses meta["channel_id"] or meta["user_id"] for routing.

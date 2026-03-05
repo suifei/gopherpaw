@@ -22,10 +22,35 @@ const (
 	memoryDir     = "memory"
 )
 
+// PromptFileEntry defines a file to load and whether it is required.
+type PromptFileEntry struct {
+	Filename string
+	Required bool
+}
+
+// PromptConfig holds the prompt loading configuration.
+type PromptConfig struct {
+	FileOrder []PromptFileEntry
+	Language  string
+}
+
+// DefaultPromptConfig returns the standard CoPaw-compatible prompt config.
+func DefaultPromptConfig() PromptConfig {
+	return PromptConfig{
+		FileOrder: []PromptFileEntry{
+			{Filename: fileAGENTS, Required: true},
+			{Filename: fileSOUL, Required: true},
+			{Filename: filePROFILE, Required: false},
+		},
+		Language: "zh",
+	}
+}
+
 // PromptLoader loads the six-file prompt system from working directory.
 type PromptLoader struct {
 	workingDir string
 	fallback   string
+	config     PromptConfig
 }
 
 // WorkingDir returns the resolved working directory path.
@@ -47,7 +72,15 @@ func NewPromptLoader(workingDir string, fallback string) *PromptLoader {
 	return &PromptLoader{
 		workingDir: workingDir,
 		fallback:   fallback,
+		config:     DefaultPromptConfig(),
 	}
+}
+
+// NewPromptLoaderWithConfig creates a PromptLoader with custom config.
+func NewPromptLoaderWithConfig(workingDir string, fallback string, cfg PromptConfig) *PromptLoader {
+	loader := NewPromptLoader(workingDir, fallback)
+	loader.config = cfg
+	return loader
 }
 
 // LoadSystemPrompt returns the full system prompt. Falls back to cfg.SystemPrompt if six files are missing.
@@ -169,4 +202,47 @@ func (p *PromptLoader) readTodayMemory() (string, error) {
 		return "", fmt.Errorf("read memory/%s.md: %w", today, err)
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+// CopyMDFiles copies default md_files from srcDir to the working directory.
+// Only copies files that don't already exist.
+func (p *PromptLoader) CopyMDFiles(srcDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read md_files dir: %w", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		dstPath := filepath.Join(p.workingDir, e.Name())
+		if _, err := os.Stat(dstPath); err == nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			logger.L().Warn("copy md file", zap.String("file", e.Name()), zap.Error(err))
+		}
+	}
+	return nil
+}
+
+// Language returns the configured language.
+func (p *PromptLoader) Language() string {
+	return p.config.Language
+}
+
+// Config returns the prompt configuration.
+func (p *PromptLoader) Config() PromptConfig {
+	return p.config
 }

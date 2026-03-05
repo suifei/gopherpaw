@@ -216,6 +216,32 @@ func (a *ReactAgent) executeTool(ctx context.Context, chatID string, tc ToolCall
 	}
 	ctx = WithMemoryStore(ctx, a.memory)
 	ctx = WithChatID(ctx, chatID)
+
+	a.llmMu.RLock()
+	if ms, ok := a.llm.(ModelSwitcher); ok {
+		ctx = WithModelSwitcher(ctx, ms)
+	}
+	a.llmMu.RUnlock()
+
+	if rich, ok := tool.(RichExecutor); ok {
+		result, err := rich.ExecuteRich(ctx, tc.Arguments)
+		if err != nil {
+			return "", err
+		}
+		if sender := GetFileSender(ctx); sender != nil {
+			for _, att := range result.Attachments {
+				if sendErr := sender(ctx, att); sendErr != nil {
+					logger.L().Warn("send attachment failed",
+						zap.String("tool", tc.Name),
+						zap.String("file", att.FilePath),
+						zap.Error(sendErr),
+					)
+				}
+			}
+		}
+		return result.Text, nil
+	}
+
 	return tool.Execute(ctx, tc.Arguments)
 }
 
@@ -253,16 +279,17 @@ func (a *ReactAgent) buildMessages(ctx context.Context, chatID string) ([]Messag
 }
 
 func (a *ReactAgent) getSystemPrompt() string {
+	var base string
 	if a.loader != nil {
-		s := a.loader.BuildSystemPrompt(a.skillsContent)
-		if s != "" {
-			return s
-		}
+		base = a.loader.BuildSystemPrompt(a.skillsContent)
 	}
-	if a.cfg.SystemPrompt != "" {
-		return a.cfg.SystemPrompt
+	if base == "" {
+		base = a.cfg.SystemPrompt
 	}
-	return "You are a helpful AI assistant."
+	if base == "" {
+		base = "You are a helpful AI assistant."
+	}
+	return base
 }
 
 func estimateTokens(s string) int {

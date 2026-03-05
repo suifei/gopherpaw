@@ -13,7 +13,7 @@ import (
 )
 
 const maxMatches = 200
-const maxFileSize = 2 * 1024 * 1024 // 2MB
+const maxFileSize = 20 * 1024 * 1024 // 20MB
 
 var binaryExts = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".pdf": true,

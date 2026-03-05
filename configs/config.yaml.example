@@ -8,9 +8,31 @@ skills:
   active_dir: "active_skills"
   customized_dir: "customized_skills"
 
+# Runtime environment configuration
+# Python and Bun/Node.js runtimes for Skills and MCP support
+runtime:
+  python:
+    # Path to Python virtual environment (recommended)
+    # Create with: gopherpaw env setup
+    venv_path: "~/.gopherpaw/venv"
+    # Or explicitly specify Python interpreter (overrides venv_path)
+    # interpreter: "/usr/bin/python3"
+    # Auto-install missing Python packages when needed
+    auto_install: true
+  
+  node:
+    # JavaScript runtime: "bun" (recommended) or "node"
+    runtime: "bun"
+    # Custom Bun executable path (optional, auto-downloaded if not set)
+    # bun_path: ""
+    # Custom Node.js path (only used if runtime: "node")
+    # node_path: ""
+    # Auto-install missing npm/bun packages when needed
+    auto_install: true
+
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 8081
 
 agent:
   max_input_length: 131072
@@ -37,6 +59,24 @@ llm:
   api_key: ""
   base_url: "https://api.openai.com/v1"
   ollama_url: "http://localhost:11434"
+
+  # Multi-model routing (optional). When configured, the router auto-selects
+  # the best model based on message content (e.g. vision model for images).
+  # Each slot inherits provider/api_key/base_url from the parent llm config
+  # unless explicitly overridden. Omit this section for single-model mode.
+  #
+  # models:
+  #   default:
+  #     model: gpt-4o-mini
+  #     capabilities: [text, tools]
+  #   vision:
+  #     model: gpt-4o              # or any vision-capable model
+  #     capabilities: [text, vision, tools]
+  #   code:
+  #     model: deepseek-coder
+  #     capabilities: [text, code, tools]
+  #     base_url: "https://api.deepseek.com/v1"  # optional: different endpoint
+  #     api_key: "sk-deepseek-xxx"                # optional: different key
 
 memory:
   backend: memory

@@ -21,6 +21,11 @@ type Channel interface {
 	IsEnabled() bool
 }
 
+// FileSender is an optional Channel extension for delivering file attachments.
+type FileSender interface {
+	SendFile(ctx context.Context, to string, filePath string, mime string, meta map[string]string) error
+}
+
 // IncomingMessage represents a message received from a channel.
 type IncomingMessage struct {
 	ChatID    string           `json:"chat_id"`

@@ -14,16 +14,38 @@ import (
 
 // Config is the root configuration structure.
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server" yaml:"server"`
-	Agent     AgentConfig     `mapstructure:"agent" yaml:"agent"`
-	LLM       LLMConfig       `mapstructure:"llm" yaml:"llm"`
-	Memory    MemoryConfig    `mapstructure:"memory" yaml:"memory"`
-	Channels  ChannelsConfig  `mapstructure:"channels" yaml:"channels"`
+	Server     ServerConfig    `mapstructure:"server" yaml:"server"`
+	Agent      AgentConfig     `mapstructure:"agent" yaml:"agent"`
+	LLM        LLMConfig       `mapstructure:"llm" yaml:"llm"`
+	Memory     MemoryConfig    `mapstructure:"memory" yaml:"memory"`
+	Channels   ChannelsConfig  `mapstructure:"channels" yaml:"channels"`
 	Scheduler  SchedulerConfig `mapstructure:"scheduler" yaml:"scheduler"`
 	MCP        MCPConfig       `mapstructure:"mcp" yaml:"mcp"`
 	Log        LogConfig       `mapstructure:"log" yaml:"log"`
 	WorkingDir string          `mapstructure:"working_dir" yaml:"working_dir"`
 	Skills     SkillsConfig    `mapstructure:"skills" yaml:"skills"`
+	Runtime    RuntimeConfig   `mapstructure:"runtime" yaml:"runtime"`
+}
+
+// RuntimeConfig holds runtime environment settings for Python and Node.js.
+type RuntimeConfig struct {
+	Python PythonConfig `mapstructure:"python" yaml:"python"`
+	Node   NodeConfig   `mapstructure:"node" yaml:"node"`
+}
+
+// PythonConfig holds Python environment settings.
+type PythonConfig struct {
+	VenvPath    string `mapstructure:"venv_path" yaml:"venv_path"`       // Path to virtual environment
+	Interpreter string `mapstructure:"interpreter" yaml:"interpreter"`   // Explicit python interpreter path
+	AutoInstall bool   `mapstructure:"auto_install" yaml:"auto_install"` // Auto pip install missing packages
+}
+
+// NodeConfig holds Node.js/Bun environment settings.
+type NodeConfig struct {
+	Runtime     string `mapstructure:"runtime" yaml:"runtime"`       // "bun" or "node"
+	BunPath     string `mapstructure:"bun_path" yaml:"bun_path"`     // Custom bun executable path
+	NodePath    string `mapstructure:"node_path" yaml:"node_path"`   // Custom node executable path
+	AutoInstall bool   `mapstructure:"auto_install" yaml:"auto_install"` // Auto install missing packages
 }
 
 // SkillsConfig holds skill directory settings.
@@ -46,13 +68,55 @@ type AgentConfig struct {
 	WorkingDir     string `mapstructure:"working_dir" yaml:"working_dir"`
 }
 
+// ModelSlot defines a named model with optional provider/credential overrides and capability tags.
+type ModelSlot struct {
+	Model        string   `mapstructure:"model" yaml:"model"`
+	Provider     string   `mapstructure:"provider" yaml:"provider"`
+	BaseURL      string   `mapstructure:"base_url" yaml:"base_url"`
+	APIKey       string   `mapstructure:"api_key" yaml:"api_key"`
+	Capabilities []string `mapstructure:"capabilities" yaml:"capabilities"`
+}
+
+// HasCapability returns true if this slot declares the given capability.
+func (s ModelSlot) HasCapability(cap string) bool {
+	for _, c := range s.Capabilities {
+		if c == cap {
+			return true
+		}
+	}
+	return false
+}
+
 // LLMConfig holds LLM provider settings.
 type LLMConfig struct {
-	Provider   string `mapstructure:"provider" yaml:"provider"`
-	Model      string `mapstructure:"model" yaml:"model"`
-	APIKey     string `mapstructure:"api_key" yaml:"api_key"`
-	BaseURL    string `mapstructure:"base_url" yaml:"base_url"`
-	OllamaURL  string `mapstructure:"ollama_url" yaml:"ollama_url"`
+	Provider  string               `mapstructure:"provider" yaml:"provider"`
+	Model     string               `mapstructure:"model" yaml:"model"`
+	APIKey    string               `mapstructure:"api_key" yaml:"api_key"`
+	BaseURL   string               `mapstructure:"base_url" yaml:"base_url"`
+	OllamaURL string               `mapstructure:"ollama_url" yaml:"ollama_url"`
+	Models    map[string]ModelSlot `mapstructure:"models" yaml:"models"`
+}
+
+// ResolveSlot returns a full LLMConfig for the given slot, inheriting unset fields from the parent.
+func (c LLMConfig) ResolveSlot(name string) LLMConfig {
+	slot, ok := c.Models[name]
+	if !ok {
+		return c
+	}
+	resolved := c
+	if slot.Model != "" {
+		resolved.Model = slot.Model
+	}
+	if slot.Provider != "" {
+		resolved.Provider = slot.Provider
+	}
+	if slot.BaseURL != "" {
+		resolved.BaseURL = slot.BaseURL
+	}
+	if slot.APIKey != "" {
+		resolved.APIKey = slot.APIKey
+	}
+	return resolved
 }
 
 // MemoryConfig holds memory backend settings.
@@ -69,7 +133,7 @@ type MemoryConfig struct {
 	EmbeddingModel      string  `mapstructure:"embedding_model" yaml:"embedding_model"`
 	EmbeddingDimensions int     `mapstructure:"embedding_dimensions" yaml:"embedding_dimensions"`
 	EmbeddingMaxCache   int     `mapstructure:"embedding_max_cache" yaml:"embedding_max_cache"`
-	FTSEnabled          bool   `mapstructure:"fts_enabled" yaml:"fts_enabled"`
+	FTSEnabled          bool    `mapstructure:"fts_enabled" yaml:"fts_enabled"`
 }
 
 // ChannelsConfig holds all channel configurations.
@@ -133,8 +197,8 @@ type QQConfig struct {
 
 // SchedulerConfig holds scheduler settings.
 type SchedulerConfig struct {
-	Enabled   bool             `mapstructure:"enabled" yaml:"enabled"`
-	Heartbeat HeartbeatConfig  `mapstructure:"heartbeat" yaml:"heartbeat"`
+	Enabled   bool            `mapstructure:"enabled" yaml:"enabled"`
+	Heartbeat HeartbeatConfig `mapstructure:"heartbeat" yaml:"heartbeat"`
 }
 
 // HeartbeatConfig holds heartbeat job settings.
@@ -286,6 +350,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scheduler.heartbeat.target", "main")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
+	// Runtime defaults
+	v.SetDefault("runtime.python.venv_path", "")
+	v.SetDefault("runtime.python.interpreter", "")
+	v.SetDefault("runtime.python.auto_install", true)
+	v.SetDefault("runtime.node.runtime", "bun")
+	v.SetDefault("runtime.node.bun_path", "")
+	v.SetDefault("runtime.node.node_path", "")
+	v.SetDefault("runtime.node.auto_install", true)
 }
 
 func defaultConfig() *Config {
@@ -328,7 +400,21 @@ func defaultConfig() *Config {
 			Level:  "info",
 			Format: "json",
 		},
+		Runtime: RuntimeConfig{
+			Python: PythonConfig{
+				AutoInstall: true,
+			},
+			Node: NodeConfig{
+				Runtime:     "bun",
+				AutoInstall: true,
+			},
+		},
 	}
+}
+
+// DefaultConfig returns a new Config with default values.
+func DefaultConfig() *Config {
+	return defaultConfig()
 }
 
 func applyEnvOverrides(cfg *Config) {

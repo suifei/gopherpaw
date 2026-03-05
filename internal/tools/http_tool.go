@@ -14,7 +14,7 @@ import (
 	"github.com/suifei/gopherpaw/internal/agent"
 )
 
-const defaultHTTPTimeout = 30 * time.Second
+const defaultHTTPTimeout = 6 * time.Minute
 
 // HTTPTool performs HTTP requests (GET, POST, etc.).
 type HTTPTool struct {

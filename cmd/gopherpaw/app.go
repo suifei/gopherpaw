@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/suifei/gopherpaw/internal/config"
 	"github.com/suifei/gopherpaw/internal/llm"
 	"github.com/suifei/gopherpaw/internal/memory"
+	"github.com/suifei/gopherpaw/internal/runtime"
 	"github.com/suifei/gopherpaw/internal/scheduler"
 	"github.com/suifei/gopherpaw/internal/skills"
 	"github.com/suifei/gopherpaw/internal/tools"
@@ -28,6 +30,12 @@ var appCmd = &cobra.Command{
 	Short: "Start the GopherPaw service",
 	Long:  "Starts channels (console, telegram, etc.) and scheduler. Press Ctrl+C to shutdown.",
 	RunE:  runApp,
+}
+
+var skipEnvCheck bool
+
+func init() {
+	appCmd.Flags().BoolVar(&skipEnvCheck, "skip-env-check", false, "Skip runtime environment check on startup")
 }
 
 func runApp(cmd *cobra.Command, args []string) error {
@@ -55,6 +63,17 @@ func runApp(cmd *cobra.Command, args []string) error {
 	log := logger.L()
 	log.Info("GopherPaw starting", zap.String("config", cfgPath))
 
+	// Initialize runtime environment
+	rtMgr := runtime.NewManager(&cfg.Runtime)
+	if err := rtMgr.Initialize(); err != nil {
+		log.Warn("Runtime initialization had issues", zap.Error(err))
+	}
+
+	// Print environment check unless skipped
+	if !skipEnvCheck {
+		rtMgr.PrintEnvironmentReport()
+	}
+
 	restartCh := make(chan struct{}, 1)
 	var cfgMu sync.RWMutex
 	currentCfg := cfg
@@ -81,18 +100,23 @@ func runApp(cmd *cobra.Command, args []string) error {
 		}
 		tools.SetWorkingDir(workingDir)
 
-		llmProvider, err := llm.Create(cfg.LLM)
+		llmProvider, err := llm.NewModelRouter(cfg.LLM)
 		if err != nil {
 			return fmt.Errorf("create LLM provider: %w", err)
 		}
-		log.Info("LLM provider ready", zap.String("provider", llmProvider.Name()))
+		log.Info("LLM provider ready",
+			zap.String("provider", llmProvider.Name()),
+			zap.Strings("slots", llmProvider.SlotNames()),
+			zap.String("active", llmProvider.ActiveSlot()),
+		)
 
 		memoryStore := memory.New(cfg.Memory)
 		toolsList := tools.RegisterBuiltin()
 		log.Info("Memory and tools ready", zap.Int("tools", len(toolsList)))
 
+		configDir := filepath.Dir(cfgPath)
 		skillMgr := skills.NewManager()
-		if err := skillMgr.LoadSkills(workingDir, cfg.Skills); err != nil {
+		if err := skillMgr.LoadSkills(workingDir, configDir, cfg.Skills); err != nil {
 			log.Warn("load skills failed, continuing without skills", zap.Error(err))
 		}
 		systemPrompt := cfg.Agent.SystemPrompt
@@ -130,6 +154,9 @@ func runApp(cmd *cobra.Command, args []string) error {
 			},
 		}
 		daemonInfo.SwitchLLM = func(provider, model string) error {
+			if err := llmProvider.Switch(provider); err == nil {
+				return nil
+			}
 			cfgMu.RLock()
 			llmCfg := currentCfg.LLM
 			cfgMu.RUnlock()

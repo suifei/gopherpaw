@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -41,7 +42,26 @@ func (p *OpenAIProvider) Name() string {
 	return providerName
 }
 
-// Chat sends a chat completion request and returns the response.
+const (
+	maxRetries     = 3
+	retryBaseDelay = 2 * time.Second
+)
+
+// isTransientError checks if the error message indicates a retryable server error.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, code := range []string{"status code: 429", "status code: 500", "status code: 502", "status code: 503", "status code: 504"} {
+		if strings.Contains(s, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// Chat sends a chat completion request with automatic retry on transient errors.
 func (p *OpenAIProvider) Chat(ctx context.Context, req *agent.ChatRequest) (*agent.ChatResponse, error) {
 	log := logger.L()
 	openaiReq := toOpenAIRequest(req, p.cfg.Model)
@@ -64,29 +84,56 @@ func (p *OpenAIProvider) Chat(ctx context.Context, req *agent.ChatRequest) (*age
 		}
 	}
 
-	start := time.Now()
-	resp, err := p.client.CreateChatCompletion(ctx, openaiReq)
-	elapsed := time.Since(start)
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := retryBaseDelay * time.Duration(1<<(attempt-1))
+			log.Warn("LLM retrying after transient error",
+				zap.Int("attempt", attempt),
+				zap.Duration("delay", delay),
+				zap.Error(lastErr),
+			)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
 
-	if err != nil {
-		log.Error("LLM request failed", zap.Error(err), zap.Duration("elapsed", elapsed))
-		return nil, fmt.Errorf("chat completion: %w", err)
+		start := time.Now()
+		resp, err := p.client.CreateChatCompletion(ctx, openaiReq)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			lastErr = err
+			log.Error("LLM request failed",
+				zap.Error(err),
+				zap.Duration("elapsed", elapsed),
+				zap.Int("attempt", attempt+1),
+				zap.Int("maxAttempts", maxRetries+1),
+			)
+			if isTransientError(err) && attempt < maxRetries {
+				continue
+			}
+			return nil, fmt.Errorf("chat completion: %w", err)
+		}
+
+		agentResp := toOpenAIAgentResponse(&resp)
+		log.Debug("LLM response",
+			zap.Duration("elapsed", elapsed),
+			zap.Int("contentLen", len(agentResp.Content)),
+			zap.Int("toolCalls", len(agentResp.ToolCalls)),
+			zap.Int("promptTokens", agentResp.Usage.PromptTokens),
+			zap.Int("completionTokens", agentResp.Usage.CompletionTokens),
+			zap.Int("totalTokens", agentResp.Usage.TotalTokens),
+		)
+		if log.Core().Enabled(zap.DebugLevel) && agentResp.Content != "" {
+			log.Debug("LLM content preview", zap.String("content", truncateStr(agentResp.Content, 300)))
+		}
+
+		return agentResp, nil
 	}
-
-	agentResp := toOpenAIAgentResponse(&resp)
-	log.Debug("LLM response",
-		zap.Duration("elapsed", elapsed),
-		zap.Int("contentLen", len(agentResp.Content)),
-		zap.Int("toolCalls", len(agentResp.ToolCalls)),
-		zap.Int("promptTokens", agentResp.Usage.PromptTokens),
-		zap.Int("completionTokens", agentResp.Usage.CompletionTokens),
-		zap.Int("totalTokens", agentResp.Usage.TotalTokens),
-	)
-	if log.Core().Enabled(zap.DebugLevel) && agentResp.Content != "" {
-		log.Debug("LLM content preview", zap.String("content", truncateStr(agentResp.Content, 300)))
-	}
-
-	return agentResp, nil
+	return nil, fmt.Errorf("chat completion: all %d attempts failed: %w", maxRetries+1, lastErr)
 }
 
 func truncateStr(s string, maxLen int) string {

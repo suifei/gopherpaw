@@ -113,14 +113,14 @@ func (c *ConsoleChannel) Start(ctx context.Context) error {
 					Timestamp: time.Now().Unix(),
 				}
 				if c.onMsg != nil {
-					runCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+					runCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 					runCtx = agent.WithProgressReporter(runCtx, &consoleProgressReporter{})
 					if err := c.onMsg(runCtx, "console", msg); err != nil {
 						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					}
 					cancel()
 				} else {
-					runCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+					runCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 					runCtx = agent.WithProgressReporter(runCtx, &consoleProgressReporter{})
 					response, err := c.agent.Run(runCtx, "console:default", line)
 					cancel()
@@ -142,6 +142,12 @@ func (c *ConsoleChannel) Send(ctx context.Context, to string, text string, meta 
 	if text != "" {
 		fmt.Println(text)
 	}
+	return nil
+}
+
+// SendFile prints file info to stdout.
+func (c *ConsoleChannel) SendFile(ctx context.Context, to string, filePath string, mime string, meta map[string]string) error {
+	fmt.Fprintf(os.Stdout, "📎 File: %s (%s)\n", filePath, mime)
 	return nil
 }
 

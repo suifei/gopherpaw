@@ -11,7 +11,7 @@ import (
 func TestManager_LoadSkills_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager()
-	err := mgr.LoadSkills(dir, config.SkillsConfig{
+	err := mgr.LoadSkills(dir, dir, config.SkillsConfig{
 		ActiveDir:     "active_skills",
 		CustomizedDir: "customized_skills",
 	})
@@ -43,7 +43,7 @@ This is the skill content.`
 	}
 
 	mgr := NewManager()
-	err := mgr.LoadSkills(dir, config.SkillsConfig{
+	err := mgr.LoadSkills(dir, dir, config.SkillsConfig{
 		ActiveDir:     "active_skills",
 		CustomizedDir: "customized_skills",
 	})

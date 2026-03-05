@@ -1,0 +1,28 @@
+# GopherPaw Python Dependencies
+# These are common packages required by various skills
+
+# Document processing
+pandas>=2.0.0
+python-docx>=0.8.11
+openpyxl>=3.1.0
+python-pptx>=0.6.21
+PyPDF2>=3.0.0
+pdf2image>=1.16.0
+
+# Web and HTTP
+requests>=2.31.0
+httpx>=0.24.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Browser automation
+playwright>=1.40.0
+browser-use>=0.1.0
+
+# Data processing
+pillow>=10.0.0
+numpy>=1.24.0
+
+# Utilities
+pyyaml>=6.0
+python-dateutil>=2.8.0

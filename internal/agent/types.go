@@ -33,8 +33,8 @@ type DaemonInfo struct {
 	Version      string
 	Status       string
 	Logs         func(n int) string
-	ReloadConfig func() error // 热重载配置，/daemon reload-config 调用
-	Restart      func() error // 进程内重启，/daemon restart 调用
+	ReloadConfig func() error                       // 热重载配置，/daemon reload-config 调用
+	Restart      func() error                       // 进程内重启，/daemon restart 调用
 	SwitchLLM    func(provider, model string) error // 运行时切换 LLM，/switch-model 调用
 }
 
@@ -86,15 +86,15 @@ type ChatStream interface {
 type ChatRequest struct {
 	Messages    []Message `json:"messages"`
 	Tools       []ToolDef `json:"tools,omitempty"`
-	Temperature float64  `json:"temperature,omitempty"`
-	MaxTokens   int      `json:"max_tokens,omitempty"`
+	Temperature float64   `json:"temperature,omitempty"`
+	MaxTokens   int       `json:"max_tokens,omitempty"`
 }
 
 // ChatResponse holds the output of a chat completion.
 type ChatResponse struct {
 	Content   string     `json:"content"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	Usage     Usage     `json:"usage"`
+	Usage     Usage      `json:"usage"`
 }
 
 // Message represents a single chat message.
@@ -208,6 +208,66 @@ type Tool interface {
 	Execute(ctx context.Context, arguments string) (string, error)
 }
 
+// Attachment represents a file attachment in a tool result.
+type Attachment struct {
+	FilePath string `json:"file_path"`
+	MimeType string `json:"mime_type"`
+	FileName string `json:"file_name"`
+}
+
+// ToolResult holds text and optional file attachments from tool execution.
+type ToolResult struct {
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// RichExecutor is an optional Tool extension for multimodal results.
+// Agent runtime checks for this interface; falls back to Tool.Execute if absent.
+type RichExecutor interface {
+	ExecuteRich(ctx context.Context, arguments string) (*ToolResult, error)
+}
+
+// FileSenderFunc delivers an attachment to the user via the current channel.
+type FileSenderFunc func(ctx context.Context, att Attachment) error
+
+type fileSenderKey struct{}
+
+// WithFileSender attaches a FileSenderFunc to context.
+func WithFileSender(ctx context.Context, fn FileSenderFunc) context.Context {
+	return context.WithValue(ctx, fileSenderKey{}, fn)
+}
+
+// GetFileSender retrieves the FileSenderFunc from context, or nil.
+func GetFileSender(ctx context.Context) FileSenderFunc {
+	if fn, ok := ctx.Value(fileSenderKey{}).(FileSenderFunc); ok {
+		return fn
+	}
+	return nil
+}
+
+// ModelSwitcher allows tools to switch the active model slot at runtime.
+type ModelSwitcher interface {
+	Switch(slotName string) error
+	ActiveSlot() string
+	SlotNames() []string
+	HasCapability(cap string) bool
+}
+
+type modelSwitcherKey struct{}
+
+// WithModelSwitcher attaches a ModelSwitcher to context.
+func WithModelSwitcher(ctx context.Context, ms ModelSwitcher) context.Context {
+	return context.WithValue(ctx, modelSwitcherKey{}, ms)
+}
+
+// GetModelSwitcher retrieves the ModelSwitcher from context, or nil.
+func GetModelSwitcher(ctx context.Context) ModelSwitcher {
+	if ms, ok := ctx.Value(modelSwitcherKey{}).(ModelSwitcher); ok {
+		return ms
+	}
+	return nil
+}
+
 // Channel represents a messaging platform adapter.
 type Channel interface {
 	// Start begins listening for messages.
@@ -225,12 +285,12 @@ type MessageHandler func(ctx context.Context, msg IncomingMessage) (string, erro
 
 // IncomingMessage represents a message received from a channel.
 type IncomingMessage struct {
-	ChatID   string `json:"chat_id"`
-	UserID   string `json:"user_id"`
-	UserName string `json:"user_name"`
-	Content  string `json:"content"`
-	Channel  string `json:"channel"`
-	Timestamp int64 `json:"timestamp"`
+	ChatID    string `json:"chat_id"`
+	UserID    string `json:"user_id"`
+	UserName  string `json:"user_name"`
+	Content   string `json:"content"`
+	Channel   string `json:"channel"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // Scheduler manages cron jobs and periodic tasks.

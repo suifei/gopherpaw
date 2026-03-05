@@ -109,7 +109,7 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 			},
 		}
 		if c.onMsg != nil {
-			runCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			runCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 			defer cancel()
 			if err := c.onMsg(runCtx, "telegram", msg); err != nil {
 				logger.L().Warn("telegram onMsg failed", zap.Error(err))
@@ -168,6 +168,37 @@ func (c *TelegramChannel) Send(ctx context.Context, to string, text string, meta
 		}
 	}
 	return nil
+}
+
+// SendFile sends a file to the given Telegram chat.
+func (c *TelegramChannel) SendFile(ctx context.Context, to string, filePath string, mimeType string, meta map[string]string) error {
+	if !c.IsEnabled() || c.bot == nil {
+		return nil
+	}
+	chatIDStr := to
+	if meta != nil {
+		if id := meta["chat_id"]; id != "" {
+			chatIDStr = id
+		}
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat_id: %w", err)
+	}
+	recipient := &telebot.Chat{ID: chatID}
+
+	doc := &telebot.Document{
+		File: telebot.FromDisk(filePath),
+	}
+	if strings.HasPrefix(mimeType, "image/") {
+		photo := &telebot.Photo{
+			File: telebot.FromDisk(filePath),
+		}
+		_, err = c.bot.Send(recipient, photo)
+	} else {
+		_, err = c.bot.Send(recipient, doc)
+	}
+	return err
 }
 
 func chunkText(s string, maxLen int) []string {

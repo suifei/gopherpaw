@@ -12,7 +12,7 @@ import (
 	"github.com/suifei/gopherpaw/internal/agent"
 )
 
-const defaultWebSearchMaxResults = 8
+const defaultWebSearchMaxResults = 12
 
 // WebSearchTool performs web search via DuckDuckGo (no API key required).
 type WebSearchTool struct {

@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -89,10 +90,27 @@ func (m *Manager) SetDaemonInfo(info *agent.DaemonInfo) {
 func (m *Manager) handleMessage(ctx context.Context, chName string, msg IncomingMessage) error {
 	m.mu.RLock()
 	info := m.daemonInfo
+	ch := m.chMap[chName]
 	m.mu.RUnlock()
 	if info != nil {
 		ctx = agent.WithDaemonInfo(ctx, info)
 	}
+
+	meta := msg.Metadata
+	if meta == nil {
+		meta = make(map[string]string)
+	}
+
+	ctx = agent.WithFileSender(ctx, func(fctx context.Context, att agent.Attachment) error {
+		if ch == nil {
+			return nil
+		}
+		if sender, ok := ch.(FileSender); ok {
+			return sender.SendFile(fctx, msg.ChatID, att.FilePath, att.MimeType, meta)
+		}
+		return ch.Send(fctx, msg.ChatID, fmt.Sprintf("[file: %s]", att.FilePath), meta)
+	})
+
 	sessionID := msg.Channel + ":" + msg.ChatID
 	if msg.ChatID == "" {
 		sessionID = msg.Channel + ":" + msg.UserID
@@ -102,14 +120,7 @@ func (m *Manager) handleMessage(ctx context.Context, chName string, msg Incoming
 		response = "Error: " + err.Error()
 		logger.L().Warn("agent run failed", zap.String("channel", chName), zap.Error(err))
 	}
-	m.mu.RLock()
-	ch := m.chMap[chName]
-	m.mu.RUnlock()
 	if ch != nil {
-		meta := msg.Metadata
-		if meta == nil {
-			meta = make(map[string]string)
-		}
 		if err := ch.Send(ctx, msg.ChatID, response, meta); err != nil {
 			logger.L().Warn("channel send failed", zap.String("channel", chName), zap.Error(err))
 		}

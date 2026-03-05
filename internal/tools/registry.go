@@ -41,6 +41,8 @@ func RegisterBuiltin() []agent.Tool {
 		slog.Warn("web_search tool disabled", "error", err)
 	}
 	builtins = append(builtins, NewHTTPTool())
+	builtins = append(builtins, &BrowserTool{}, &ScreenshotTool{}, &SendFileTool{})
+	builtins = append(builtins, &ModelSwitchTool{})
 	return builtins
 }
 
