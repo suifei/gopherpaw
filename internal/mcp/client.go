@@ -2,13 +2,10 @@
 package mcp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sync"
-	"time"
 
 	"github.com/suifei/gopherpaw/internal/agent"
 	"github.com/suifei/gopherpaw/internal/config"
@@ -37,11 +34,17 @@ func ParseMCPConfig(jsonBytes []byte) (map[string]config.MCPServerConfig, error)
 	}
 	if _, hasKey := raw["key"]; hasKey {
 		var single struct {
-			Key     string `json:"key"`
-			Command string `json:"command"`
-			Args    []string `json:"args"`
-			Env     map[string]string `json:"env"`
-			Enabled *bool   `json:"enabled"`
+			Key         string            `json:"key"`
+			Name        string            `json:"name"`
+			Description string            `json:"description"`
+			Transport   string            `json:"transport"`
+			URL         string            `json:"url"`
+			Headers     map[string]string `json:"headers"`
+			Command     string            `json:"command"`
+			Args        []string          `json:"args"`
+			Env         map[string]string `json:"env"`
+			Cwd         string            `json:"cwd"`
+			Enabled     *bool             `json:"enabled"`
 		}
 		if err := json.Unmarshal(jsonBytes, &single); err != nil {
 			return nil, fmt.Errorf("parse single: %w", err)
@@ -52,10 +55,16 @@ func ParseMCPConfig(jsonBytes []byte) (map[string]config.MCPServerConfig, error)
 		}
 		return map[string]config.MCPServerConfig{
 			name: {
-				Command: single.Command,
-				Args:    single.Args,
-				Env:     single.Env,
-				Enabled: single.Enabled,
+				Name:        single.Name,
+				Description: single.Description,
+				Transport:   single.Transport,
+				URL:         single.URL,
+				Headers:     single.Headers,
+				Command:     single.Command,
+				Args:        single.Args,
+				Env:         single.Env,
+				Cwd:         single.Cwd,
+				Enabled:     single.Enabled,
 			},
 		}, nil
 	}
@@ -65,7 +74,7 @@ func ParseMCPConfig(jsonBytes []byte) (map[string]config.MCPServerConfig, error)
 		if err := json.Unmarshal(v, &cfg); err != nil {
 			continue
 		}
-		if cfg.Command != "" {
+		if cfg.Command != "" || cfg.URL != "" {
 			out[k] = cfg
 		}
 	}
@@ -74,17 +83,43 @@ func ParseMCPConfig(jsonBytes []byte) (map[string]config.MCPServerConfig, error)
 
 // MCPClient represents a connection to a single MCP server.
 type MCPClient struct {
-	Name    string
-	Command string
-	Args    []string
-	Env     map[string]string
-	Enabled bool
+	Name        string
+	Description string
+	Transport   Transport
+	Enabled     bool
+}
 
-	cmd     *exec.Cmd
-	stdin   *bufio.Writer
-	stdout  *bufio.Scanner
-	mu      sync.Mutex
-	running bool
+// NewMCPClient creates a new MCP client from config.
+func NewMCPClient(name string, cfg config.MCPServerConfig) (*MCPClient, error) {
+	enabled := cfg.Enabled == nil || *cfg.Enabled
+
+	var t Transport
+	switch cfg.Transport {
+	case "", "stdio":
+		if cfg.Command == "" {
+			return nil, fmt.Errorf("command required for stdio transport")
+		}
+		t = NewStdioTransport(cfg)
+	case "streamable_http":
+		if cfg.URL == "" {
+			return nil, fmt.Errorf("url required for streamable_http transport")
+		}
+		t = NewHTTPTransport(cfg)
+	case "sse":
+		if cfg.URL == "" {
+			return nil, fmt.Errorf("url required for sse transport")
+		}
+		t = NewSSETransport(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported transport: %s", cfg.Transport)
+	}
+
+	return &MCPClient{
+		Name:        name,
+		Description: cfg.Description,
+		Transport:   t,
+		Enabled:     enabled,
+	}, nil
 }
 
 // MCPManager manages multiple MCP clients and provides tools.
@@ -108,58 +143,51 @@ func (m *MCPManager) LoadConfig(cfg map[string]config.MCPServerConfig) error {
 	defer m.mu.Unlock()
 	m.clients = make(map[string]*MCPClient)
 	for name, c := range cfg {
-		if c.Command == "" {
+		client, err := NewMCPClient(name, c)
+		if err != nil {
+			logger.L().Warn("MCP client config error", zap.String("name", name), zap.Error(err))
 			continue
 		}
-		enabled := c.Enabled == nil || *c.Enabled
-		m.clients[name] = &MCPClient{
-			Name:    name,
-			Command: c.Command,
-			Args:    c.Args,
-			Env:     c.Env,
-			Enabled: enabled,
-		}
+		m.clients[name] = client
 	}
 	return nil
 }
 
 // AddClient dynamically adds and starts an MCP client. Caller must hold context for startup.
 func (m *MCPManager) AddClient(ctx context.Context, name string, cfg config.MCPServerConfig) error {
-	if cfg.Command == "" {
-		return fmt.Errorf("command required")
+	client, err := NewMCPClient(name, cfg)
+	if err != nil {
+		return err
 	}
-	enabled := cfg.Enabled == nil || *cfg.Enabled
-	c := &MCPClient{
-		Name:    name,
-		Command: cfg.Command,
-		Args:    cfg.Args,
-		Env:     cfg.Env,
-		Enabled: enabled,
-	}
+
 	m.mu.Lock()
 	if _, exists := m.clients[name]; exists {
 		m.mu.Unlock()
 		return fmt.Errorf("client %q already exists", name)
 	}
-	m.clients[name] = c
+	m.clients[name] = client
 	m.mu.Unlock()
-	if !enabled {
+
+	if !client.Enabled {
 		return nil
 	}
-	if err := c.start(ctx); err != nil {
+
+	if err := client.Transport.Start(ctx); err != nil {
 		m.mu.Lock()
 		delete(m.clients, name)
 		m.mu.Unlock()
 		return err
 	}
-	tools, err := c.listTools(ctx)
+
+	tools, err := m.listClientTools(ctx, client)
 	if err != nil {
-		_ = c.stop()
+		_ = client.Transport.Stop()
 		m.mu.Lock()
 		delete(m.clients, name)
 		m.mu.Unlock()
 		return err
 	}
+
 	m.mu.Lock()
 	if m.tools == nil {
 		m.tools = tools
@@ -180,7 +208,7 @@ func (m *MCPManager) RemoveClient(ctx context.Context, name string) error {
 	}
 	delete(m.clients, name)
 	m.mu.Unlock()
-	_ = c.stop()
+	_ = c.Transport.Stop()
 	m.rebuildToolsLocked()
 	return nil
 }
@@ -190,10 +218,10 @@ func (m *MCPManager) rebuildToolsLocked() {
 	defer m.mu.Unlock()
 	var allTools []agent.Tool
 	for _, c := range m.clients {
-		if !c.Enabled || !c.running {
+		if !c.Enabled || !c.Transport.IsRunning() {
 			continue
 		}
-		tools, err := c.listTools(context.Background())
+		tools, err := m.listClientTools(context.Background(), c)
 		if err != nil {
 			continue
 		}
@@ -207,21 +235,38 @@ func (m *MCPManager) Reload(ctx context.Context, newConfigs map[string]config.MC
 	m.mu.Lock()
 	current := make(map[string]config.MCPServerConfig)
 	for k, c := range m.clients {
-		current[k] = config.MCPServerConfig{
-			Command: c.Command,
-			Args:    c.Args,
-			Env:     c.Env,
+		// Extract config from client (best effort - we only have partial info)
+		// For accurate comparison, we need to track original configs
+		cfg := config.MCPServerConfig{
 			Enabled: ptr(c.Enabled),
 		}
+		if st, ok := c.Transport.(*StdioTransport); ok {
+			cfg.Transport = "stdio"
+			cfg.Command = st.cmd
+			cfg.Args = st.args
+			cfg.Env = st.env
+			cfg.Cwd = st.cwd
+		} else if ht, ok := c.Transport.(*HTTPTransport); ok {
+			cfg.Transport = "streamable_http"
+			cfg.URL = ht.url
+			cfg.Headers = ht.headers
+		} else if sse, ok := c.Transport.(*SSETransport); ok {
+			cfg.Transport = "sse"
+			cfg.URL = sse.url
+			cfg.Headers = sse.headers
+		}
+		current[k] = cfg
 	}
 	m.mu.Unlock()
+
 	for name := range current {
 		if _, ok := newConfigs[name]; !ok {
 			_ = m.RemoveClient(ctx, name)
 		}
 	}
 	for name, cfg := range newConfigs {
-		if cfg.Command == "" {
+		// Skip invalid configs
+		if cfg.Command == "" && cfg.URL == "" {
 			continue
 		}
 		cur, ok := current[name]
@@ -229,12 +274,40 @@ func (m *MCPManager) Reload(ctx context.Context, newConfigs map[string]config.MC
 			_ = m.AddClient(ctx, name, cfg)
 			continue
 		}
-		if cur.Command != cfg.Command || !slicesEqual(cur.Args, cfg.Args) {
+		if configChanged(cur, cfg) {
 			_ = m.RemoveClient(ctx, name)
 			_ = m.AddClient(ctx, name, cfg)
 		}
 	}
 	return nil
+}
+
+func configChanged(a, b config.MCPServerConfig) bool {
+	if a.Transport != b.Transport {
+		return true
+	}
+	if a.Command != b.Command || a.URL != b.URL || a.Cwd != b.Cwd {
+		return true
+	}
+	if !mapsEqual(a.Env, b.Env) || !mapsEqual(a.Headers, b.Headers) {
+		return true
+	}
+	if !slicesEqual(a.Args, b.Args) {
+		return true
+	}
+	return false
+}
+
+func mapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 func ptr(b bool) *bool { return &b }
@@ -272,11 +345,11 @@ func (m *MCPManager) Start(ctx context.Context) error {
 		if !c.Enabled {
 			continue
 		}
-		if err := c.start(ctx); err != nil {
+		if err := c.Transport.Start(ctx); err != nil {
 			logger.L().Warn("MCP client start failed", zap.String("name", name), zap.Error(err))
 			continue
 		}
-		tools, err := c.listTools(ctx)
+		tools, err := m.listClientTools(ctx, c)
 		if err != nil {
 			logger.L().Warn("MCP list tools failed", zap.String("name", name), zap.Error(err))
 			continue
@@ -294,7 +367,7 @@ func (m *MCPManager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for name, c := range m.clients {
-		if err := c.stop(); err != nil {
+		if err := c.Transport.Stop(); err != nil {
 			logger.L().Warn("MCP client stop failed", zap.String("name", name), zap.Error(err))
 		}
 	}
@@ -302,47 +375,7 @@ func (m *MCPManager) Stop() error {
 	return nil
 }
 
-func (c *MCPClient) start(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.running {
-		return nil
-	}
-	c.cmd = exec.CommandContext(ctx, c.Command, c.Args...)
-	c.cmd.Env = envToSlice(c.Env)
-	c.cmd.Stderr = nil
-	stdin, err := c.cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
-	}
-	stdout, err := c.cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := c.cmd.Start(); err != nil {
-		return fmt.Errorf("start: %w", err)
-	}
-	c.stdin = bufio.NewWriter(stdin)
-	c.stdout = bufio.NewScanner(stdout)
-	c.running = true
-	return nil
-}
-
-func (c *MCPClient) stop() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.running {
-		return nil
-	}
-	c.running = false
-	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	c.cmd = nil
-	return nil
-}
-
-func (c *MCPClient) listTools(ctx context.Context) ([]agent.Tool, error) {
+func (m *MCPManager) listClientTools(ctx context.Context, c *MCPClient) ([]agent.Tool, error) {
 	// Send initialize (required by many MCP servers)
 	initReq := jsonRPCRequest{
 		JSONRPC: "2.0",
@@ -355,17 +388,18 @@ func (c *MCPClient) listTools(ctx context.Context) ([]agent.Tool, error) {
 		},
 	}
 	var initResp struct {
-		Result struct{}     `json:"result"`
+		Result struct{}      `json:"result"`
 		Error  *jsonRPCError `json:"error,omitempty"`
 	}
-	if err := c.call(ctx, initReq, &initResp); err != nil {
+	if err := c.Transport.Call(ctx, initReq, &initResp); err != nil {
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 	if initResp.Error != nil {
 		return nil, fmt.Errorf("initialize error: %s", initResp.Error.Message)
 	}
+
 	// Send initialized notification (no response expected)
-	c.writeNotification(map[string]any{
+	c.Transport.WriteNotification(map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "notifications/initialized",
 	})
@@ -377,12 +411,13 @@ func (c *MCPClient) listTools(ctx context.Context) ([]agent.Tool, error) {
 		Params:  map[string]string{},
 	}
 	var resp jsonRPCListResponse
-	if err := c.call(ctx, req, &resp); err != nil {
+	if err := c.Transport.Call(ctx, req, &resp); err != nil {
 		return nil, err
 	}
 	if resp.Error != nil {
 		return nil, fmt.Errorf("tools/list error: %s", resp.Error.Message)
 	}
+
 	var tools []agent.Tool
 	for _, t := range resp.Result.Tools {
 		tools = append(tools, &mcpToolAdapter{
@@ -406,7 +441,7 @@ func (c *MCPClient) callTool(ctx context.Context, name string, args map[string]a
 		},
 	}
 	var resp jsonRPCCallResponse
-	if err := c.call(ctx, req, &resp); err != nil {
+	if err := c.Transport.Call(ctx, req, &resp); err != nil {
 		return "", err
 	}
 	if resp.Error != nil {
@@ -418,72 +453,7 @@ func (c *MCPClient) callTool(ctx context.Context, name string, args map[string]a
 	return "", nil
 }
 
-func (c *MCPClient) call(ctx context.Context, req jsonRPCRequest, result interface{}) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if !c.running {
-		return fmt.Errorf("client not running")
-	}
-	data, err := json.Marshal(req)
-	if err != nil {
-		return err
-	}
-	if _, err := c.stdin.Write(data); err != nil {
-		return err
-	}
-	if err := c.stdin.WriteByte('\n'); err != nil {
-		return err
-	}
-	if err := c.stdin.Flush(); err != nil {
-		return err
-	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(30 * time.Second)
-	}
-	done := make(chan struct{})
-	var scanErr error
-	go func() {
-		if c.stdout.Scan() {
-			scanErr = json.Unmarshal(c.stdout.Bytes(), result)
-		} else {
-			scanErr = c.stdout.Err()
-			if scanErr == nil {
-				scanErr = fmt.Errorf("unexpected EOF")
-			}
-		}
-		close(done)
-	}()
-	select {
-	case <-done:
-		return scanErr
-	case <-time.After(time.Until(deadline)):
-		return fmt.Errorf("timeout waiting for MCP response")
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *MCPClient) writeNotification(msg map[string]any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	c.stdin.Write(data)
-	c.stdin.WriteByte('\n')
-	return c.stdin.Flush()
-}
-
-func envToSlice(env map[string]string) []string {
-	base := []string{}
-	for k, v := range env {
-		base = append(base, k+"="+v)
-	}
-	return base
-}
-
+// jsonRPCRequest represents a JSON-RPC 2.0 request.
 type jsonRPCRequest struct {
 	JSONRPC string      `json:"jsonrpc"`
 	ID      int         `json:"id"`
@@ -491,31 +461,37 @@ type jsonRPCRequest struct {
 	Params  interface{} `json:"params"`
 }
 
+// jsonRPCError represents a JSON-RPC 2.0 error.
 type jsonRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
+// jsonRPCListResponse represents a tools/list response.
 type jsonRPCListResponse struct {
-	Result  jsonRPCListResult `json:"result"`
-	Error   *jsonRPCError     `json:"error,omitempty"`
+	Result jsonRPCListResult `json:"result"`
+	Error  *jsonRPCError     `json:"error,omitempty"`
 }
 
+// jsonRPCListResult represents the result of tools/list.
 type jsonRPCListResult struct {
 	Tools []mcpToolDef `json:"tools"`
 }
 
+// mcpToolDef represents an MCP tool definition.
 type mcpToolDef struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	InputSchema interface{} `json:"inputSchema"`
 }
 
+// jsonRPCCallResponse represents a tools/call response.
 type jsonRPCCallResponse struct {
-	Result  jsonRPCCallResult `json:"result"`
-	Error   *jsonRPCError     `json:"error,omitempty"`
+	Result jsonRPCCallResult `json:"result"`
+	Error  *jsonRPCError     `json:"error,omitempty"`
 }
 
+// jsonRPCCallResult represents the result of tools/call.
 type jsonRPCCallResult struct {
 	Content []struct {
 		Type string `json:"type"`
@@ -523,6 +499,7 @@ type jsonRPCCallResult struct {
 	} `json:"content"`
 }
 
+// mcpToolAdapter adapts an MCP tool to agent.Tool interface.
 type mcpToolAdapter struct {
 	client *MCPClient
 	name   string

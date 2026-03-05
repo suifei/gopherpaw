@@ -42,9 +42,9 @@ type PythonConfig struct {
 
 // NodeConfig holds Node.js/Bun environment settings.
 type NodeConfig struct {
-	Runtime     string `mapstructure:"runtime" yaml:"runtime"`       // "bun" or "node"
-	BunPath     string `mapstructure:"bun_path" yaml:"bun_path"`     // Custom bun executable path
-	NodePath    string `mapstructure:"node_path" yaml:"node_path"`   // Custom node executable path
+	Runtime     string `mapstructure:"runtime" yaml:"runtime"`           // "bun" or "node"
+	BunPath     string `mapstructure:"bun_path" yaml:"bun_path"`         // Custom bun executable path
+	NodePath    string `mapstructure:"node_path" yaml:"node_path"`       // Custom node executable path
 	AutoInstall bool   `mapstructure:"auto_install" yaml:"auto_install"` // Auto install missing packages
 }
 
@@ -219,12 +219,19 @@ type MCPConfig struct {
 	Servers map[string]MCPServerConfig `mapstructure:"servers" yaml:"servers"`
 }
 
-// MCPServerConfig holds a single MCP server's command and args.
+// MCPServerConfig holds a single MCP server's configuration.
+// Supports three transport types: stdio, streamable_http, sse.
 type MCPServerConfig struct {
-	Command string            `mapstructure:"command" yaml:"command"`
-	Args    []string          `mapstructure:"args" yaml:"args"`
-	Env     map[string]string `mapstructure:"env" yaml:"env"`
-	Enabled *bool             `mapstructure:"enabled" yaml:"enabled"` // nil = true (default), false = disabled
+	Name        string            `mapstructure:"name" yaml:"name"`
+	Description string            `mapstructure:"description" yaml:"description"`
+	Enabled     *bool             `mapstructure:"enabled" yaml:"enabled"` // nil = true (default), false = disabled
+	Transport   string            `mapstructure:"transport" yaml:"transport"` // "stdio", "streamable_http", "sse" (default: "stdio")
+	URL         string            `mapstructure:"url" yaml:"url"`             // HTTP/SSE endpoint URL
+	Headers     map[string]string `mapstructure:"headers" yaml:"headers"`     // HTTP headers for remote transports
+	Command     string            `mapstructure:"command" yaml:"command"`     // Executable command for stdio transport
+	Args        []string          `mapstructure:"args" yaml:"args"`           // Command-line arguments
+	Env         map[string]string `mapstructure:"env" yaml:"env"`             // Environment variables
+	Cwd         string            `mapstructure:"cwd" yaml:"cwd"`             // Working directory for stdio transport
 }
 
 // LogConfig holds logging settings.
