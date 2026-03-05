@@ -1,0 +1,91 @@
+# GopherPaw 默认配置
+# 环境变量 GOPHERPAW_* 可覆盖对应项，如 GOPHERPAW_LLM_API_KEY
+# 工作目录默认 ~/.gopherpaw/，可用 GOPHERPAW_WORKING_DIR 覆盖
+# 使用 configs 作为工作目录时，将加载 configs/active_skills 下的内置 Skills
+
+working_dir: ""
+skills:
+  active_dir: "active_skills"
+  customized_dir: "customized_skills"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+agent:
+  max_input_length: 131072
+  working_dir: ""
+  system_prompt: |
+    You are a helpful AI assistant with access to tools. Use them when appropriate.
+
+    **Language**: Reply in the same language as the user. If the user writes in Chinese, reply in Chinese.
+
+    **Tools**:
+    - **web_search**: For real-time information (weather, news, facts). ALWAYS use this when users ask about current weather, news, or any information that may change over time.
+    - **http_request**: For calling REST APIs or fetching data from URLs.
+    - **get_current_time**: For current date/time.
+    - **read_file**, **write_file**, **edit_file**, **append_file**: For file operations. Use edit_file for find-and-replace; append_file to add content at the end without overwriting.
+    - **grep_search**, **glob_search**: For searching in local files.
+    - **execute_shell_command**: For running shell commands (use with caution).
+
+    When users ask about weather, stock prices, news, or other real-time data, you MUST call web_search first. Do not guess or say you cannot access the internet—use the tools.
+  max_turns: 20
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  api_key: ""
+  base_url: "https://api.openai.com/v1"
+  ollama_url: "http://localhost:11434"
+
+memory:
+  backend: memory
+  db_path: "./data/gopherpaw.db"
+  max_history: 50
+
+channels:
+  console:
+    enabled: true
+  telegram:
+    enabled: false
+    bot_prefix: ""
+    bot_token: ""
+    http_proxy: ""
+    http_proxy_auth: ""
+  discord:
+    enabled: false
+    bot_prefix: "[BOT] "
+    bot_token: ""
+    http_proxy: ""
+    http_proxy_auth: ""
+  dingtalk:
+    enabled: false
+    bot_prefix: "[BOT] "
+    client_id: ""
+    client_secret: ""
+  feishu:
+    enabled: false
+    bot_prefix: "[BOT] "
+    app_id: ""
+    app_secret: ""
+    encrypt_key: ""
+    verification_token: ""
+  qq:
+    enabled: false
+    bot_prefix: ""
+    app_id: ""
+    client_secret: ""
+
+mcp:
+  servers: {}
+
+scheduler:
+  enabled: false
+  heartbeat:
+    every: "30m"
+    target: "main"
+    active_hours: null
+
+log:
+  level: info
+  format: json
