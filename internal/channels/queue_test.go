@@ -437,3 +437,78 @@ func TestMessageQueue_ConcurrentEnqueue(t *testing.T) {
 
 	q.Stop(ctx)
 }
+
+func TestMessageQueueDirectEnqueue(t *testing.T) {
+	processed := int32(0)
+	handler := func(ctx context.Context, chName string, msg IncomingMessage) error {
+		atomic.AddInt32(&processed, 1)
+		return nil
+	}
+
+	q := NewMessageQueue(
+		QueueConfig{MaxSize: 100, Workers: 1},
+		DebounceConfig{Enabled: false},
+		handler,
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	q.Start(ctx)
+
+	ch := &mockChannel{name: "test", enabled: true}
+
+	// Enqueue without debouncing
+	msg := &IncomingMessage{
+		ChatID:    "chat1",
+		Content:   "test",
+		Channel:   "test",
+		Timestamp: time.Now().Unix(),
+	}
+	q.Enqueue(ch, msg)
+
+	time.Sleep(100 * time.Millisecond)
+
+	if atomic.LoadInt32(&processed) != 1 {
+		t.Errorf("expected 1 processed message, got %d", processed)
+	}
+
+	q.Stop(ctx)
+}
+
+func TestMessageQueueStats(t *testing.T) {
+	handler := func(ctx context.Context, chName string, msg IncomingMessage) error {
+		return nil
+	}
+
+	q := NewMessageQueue(
+		QueueConfig{MaxSize: 100, Workers: 1},
+		DebounceConfig{Enabled: false},
+		handler,
+	)
+
+	stats := q.Stats()
+	if stats.QueueLength != 0 {
+		t.Errorf("expected 0 queue length, got %d", stats.QueueLength)
+	}
+}
+
+func TestDefaultDebouncerShouldDebounceCommand(t *testing.T) {
+	debouncer := &DefaultDebouncer{}
+	msg := &IncomingMessage{
+		Content: "/help",
+	}
+	if debouncer.ShouldDebounce(msg) {
+		t.Errorf("commands should NOT debounce")
+	}
+}
+
+func TestDefaultDebouncerShouldDebounceRegularMessage(t *testing.T) {
+	debouncer := &DefaultDebouncer{}
+	msg := &IncomingMessage{
+		Content: "hello",
+	}
+	if !debouncer.ShouldDebounce(msg) {
+		t.Errorf("regular messages SHOULD debounce by default")
+	}
+}

@@ -50,4 +50,3 @@ func TestIncomingMessage(t *testing.T) {
 		t.Errorf("Metadata[chat_id] = %q, want 123", msg.Metadata["chat_id"])
 	}
 }
-
