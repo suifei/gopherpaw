@@ -147,3 +147,148 @@ func TestResolveWorkingDir(t *testing.T) {
 		t.Error("ResolveWorkingDir with path should not return empty")
 	}
 }
+
+func TestModelSlot_HasCapability(t *testing.T) {
+	tests := []struct {
+		name string
+		slot ModelSlot
+		cap  string
+		want bool
+	}{
+		{
+			name: "capability exists",
+			slot: ModelSlot{Capabilities: []string{"vision", "tool-use"}},
+			cap:  "vision",
+			want: true,
+		},
+		{
+			name: "capability does not exist",
+			slot: ModelSlot{Capabilities: []string{"vision", "tool-use"}},
+			cap:  "streaming",
+			want: false,
+		},
+		{
+			name: "empty capabilities",
+			slot: ModelSlot{Capabilities: []string{}},
+			cap:  "vision",
+			want: false,
+		},
+		{
+			name: "nil capabilities",
+			slot: ModelSlot{Capabilities: nil},
+			cap:  "vision",
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.slot.HasCapability(tt.cap)
+			if got != tt.want {
+				t.Errorf("HasCapability(%q) = %v, want %v", tt.cap, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLLMConfig_ResolveSlot(t *testing.T) {
+	tests := []struct {
+		name   string
+		config LLMConfig
+		slot   string
+		want   LLMConfig
+	}{
+		{
+			name: "slot exists and overrides parent",
+			config: LLMConfig{
+				Provider: "openai",
+				Model:    "gpt-4",
+				APIKey:   "key1",
+				Models: map[string]ModelSlot{
+					"vision": {Model: "gpt-4-vision", APIKey: "key2"},
+				},
+			},
+			slot: "vision",
+			want: LLMConfig{
+				Provider: "openai",
+				Model:    "gpt-4-vision",
+				APIKey:   "key2",
+				Models: map[string]ModelSlot{
+					"vision": {Model: "gpt-4-vision", APIKey: "key2"},
+				},
+			},
+		},
+		{
+			name: "slot does not exist, returns parent",
+			config: LLMConfig{
+				Provider: "openai",
+				Model:    "gpt-4",
+				APIKey:   "key1",
+			},
+			slot: "nonexistent",
+			want: LLMConfig{
+				Provider: "openai",
+				Model:    "gpt-4",
+				APIKey:   "key1",
+			},
+		},
+		{
+			name: "slot exists with partial override",
+			config: LLMConfig{
+				Provider: "openai",
+				Model:    "gpt-4",
+				APIKey:   "key1",
+				Models: map[string]ModelSlot{
+					"code": {Model: "gpt-4-code"},
+				},
+			},
+			slot: "code",
+			want: LLMConfig{
+				Provider: "openai",
+				Model:    "gpt-4-code",
+				APIKey:   "key1",
+				Models: map[string]ModelSlot{
+					"code": {Model: "gpt-4-code"},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.ResolveSlot(tt.slot)
+			if got.Provider != tt.want.Provider || got.Model != tt.want.Model {
+				t.Errorf("ResolveSlot(%q) = {Provider: %q, Model: %q}, want {Provider: %q, Model: %q}",
+					tt.slot, got.Provider, got.Model, tt.want.Provider, tt.want.Model)
+			}
+			if got.APIKey != tt.want.APIKey {
+				t.Errorf("ResolveSlot(%q) APIKey = %q, want %q", tt.slot, got.APIKey, tt.want.APIKey)
+			}
+		})
+	}
+}
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg == nil {
+		t.Fatal("DefaultConfig should return non-nil config")
+	}
+	// Verify some basic defaults
+	if cfg.Server.Port == 0 {
+		t.Error("DefaultConfig should have non-zero port")
+	}
+	if cfg.Agent.MaxTurns == 0 {
+		t.Error("DefaultConfig should have non-zero max_turns")
+	}
+}
+
+func TestLLMConfig_ResolveSlot_EdgeCases(t *testing.T) {
+	// Test with nil Models map
+	cfg := LLMConfig{
+		Provider: "openai",
+		Model:    "gpt-4",
+		Models:   nil,
+	}
+	result := cfg.ResolveSlot("test")
+	if result.Model != "gpt-4" {
+		t.Errorf("ResolveSlot with nil Models should return parent config, got model %q", result.Model)
+	}
+}
