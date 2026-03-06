@@ -7,22 +7,34 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/suifei/gopherpaw/internal/agent"
 )
 
 // workingDir is the base path for relative file operations.
-var workingDir = "."
+var (
+	workingDir   string
+	workingDirMu sync.Mutex
+)
 
 // SetWorkingDir sets the working directory for file tools.
 func SetWorkingDir(dir string) {
+	workingDirMu.Lock()
+	defer workingDirMu.Unlock()
 	workingDir = dir
+}
+
+func getWorkingDir() string {
+	workingDirMu.Lock()
+	defer workingDirMu.Unlock()
+	return workingDir
 }
 
 func resolvePath(p string) string {
 	path := filepath.Clean(p)
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(workingDir, path)
+		path = filepath.Join(getWorkingDir(), path)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {

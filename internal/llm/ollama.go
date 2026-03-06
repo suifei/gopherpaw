@@ -108,19 +108,19 @@ func (p *OllamaProvider) ChatStream(ctx context.Context, req *agent.ChatRequest)
 }
 
 type ollamaChatRequest struct {
-	Model       string           `json:"model"`
-	Messages    []ollamaMessage   `json:"messages"`
-	Stream      bool              `json:"stream"`
-	Tools       []ollamaTool      `json:"tools,omitempty"`
-	Temperature *float64          `json:"temperature,omitempty"`
-	NumPredict  int               `json:"num_predict,omitempty"`
+	Model       string          `json:"model"`
+	Messages    []ollamaMessage `json:"messages"`
+	Stream      bool            `json:"stream"`
+	Tools       []ollamaTool    `json:"tools,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	NumPredict  int             `json:"num_predict,omitempty"`
 }
 
 type ollamaMessage struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content,omitempty"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
 	ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type ollamaToolCall struct {
@@ -133,8 +133,8 @@ type ollamaToolCall struct {
 }
 
 type ollamaTool struct {
-	Type     string      `json:"type"`
-	Function ollamaFunc  `json:"function"`
+	Type     string     `json:"type"`
+	Function ollamaFunc `json:"function"`
 }
 
 type ollamaFunc struct {
@@ -145,13 +145,13 @@ type ollamaFunc struct {
 
 type ollamaChatResponse struct {
 	Message struct {
-		Role       string           `json:"role"`
-		Content    string           `json:"content"`
-		ToolCalls  []ollamaToolCall `json:"tool_calls,omitempty"`
+		Role      string           `json:"role"`
+		Content   string           `json:"content"`
+		ToolCalls []ollamaToolCall `json:"tool_calls,omitempty"`
 	} `json:"message"`
-	Done               bool `json:"done"`
-	PromptEvalCount    int  `json:"prompt_eval_count"`
-	EvalCount          int  `json:"eval_count"`
+	Done            bool `json:"done"`
+	PromptEvalCount int  `json:"prompt_eval_count"`
+	EvalCount       int  `json:"eval_count"`
 }
 
 func toOllamaRequest(req *agent.ChatRequest, model string) ollamaChatRequest {

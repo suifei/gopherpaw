@@ -25,9 +25,9 @@ func (t *MemorySearchTool) Parameters() any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"query":      map[string]any{"type": "string", "description": "Semantic search query"},
-			"top_k":      map[string]any{"type": "integer", "description": "Max results (default 5)"},
-			"min_score":  map[string]any{"type": "number", "description": "Minimum score threshold (default 0.1)"},
+			"query":     map[string]any{"type": "string", "description": "Semantic search query"},
+			"top_k":     map[string]any{"type": "integer", "description": "Max results (default 5)"},
+			"min_score": map[string]any{"type": "number", "description": "Minimum score threshold (default 0.1)"},
 		},
 		"required": []string{"query"},
 	}

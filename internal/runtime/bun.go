@@ -156,6 +156,21 @@ func (b *BunRuntime) downloadBun() (string, error) {
 
 // getDownloadURL returns the Bun download URL for current platform.
 func (b *BunRuntime) getDownloadURL() (string, error) {
+
+	/*
+	To install Bun vx.x.x
+	curl -fsSL https://bun.sh/install | bash
+	# or you can use npm
+	# npm install -g bun
+
+	Windows:
+	powershell -c "irm bun.sh/install.ps1|iex"
+
+	To upgrade to Bun vx.x.x:
+	bun upgrade
+	*/
+
+
 	// Bun release URL pattern: https://github.com/oven-sh/bun/releases/latest/download/bun-{os}-{arch}.{ext}
 	baseURL := "https://github.com/oven-sh/bun/releases/latest/download"
 

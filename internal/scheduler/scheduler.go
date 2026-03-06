@@ -13,11 +13,11 @@ import (
 
 // CronScheduler implements agent.Scheduler using robfig/cron.
 type CronScheduler struct {
-	cron   *cron.Cron
-	agent  agent.Agent
-	cfg    config.SchedulerConfig
-	mu     sync.Mutex
-	ids    map[string]cron.EntryID
+	cron  *cron.Cron
+	agent agent.Agent
+	cfg   config.SchedulerConfig
+	mu    sync.Mutex
+	ids   map[string]cron.EntryID
 }
 
 // New creates a scheduler. If cfg.Enabled is false, Start/AddJob are no-ops.

@@ -21,11 +21,11 @@ type WebhookHandler interface {
 
 // WebhookServer serves HTTP endpoints for channel webhooks.
 type WebhookServer struct {
-	host    string
-	port    int
+	host     string
+	port     int
 	handlers map[string]WebhookHandler
-	server  *http.Server
-	mu      sync.RWMutex
+	server   *http.Server
+	mu       sync.RWMutex
 }
 
 // NewWebhookServer creates a webhook server.

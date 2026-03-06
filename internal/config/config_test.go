@@ -281,7 +281,6 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLLMConfig_ResolveSlot_EdgeCases(t *testing.T) {
-	// Test with nil Models map
 	cfg := LLMConfig{
 		Provider: "openai",
 		Model:    "gpt-4",
@@ -290,5 +289,207 @@ func TestLLMConfig_ResolveSlot_EdgeCases(t *testing.T) {
 	result := cfg.ResolveSlot("test")
 	if result.Model != "gpt-4" {
 		t.Errorf("ResolveSlot with nil Models should return parent config, got model %q", result.Model)
+	}
+}
+
+func TestLoadWithWatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+server:
+  host: 127.0.0.1
+  port: 9000
+log:
+  level: debug
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	onChange := func(cfg *Config) {}
+
+	cfg, err := LoadWithWatch(path, onChange)
+	if err != nil {
+		t.Fatalf("LoadWithWatch failed: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("LoadWithWatch should return config")
+	}
+	if cfg.Server.Port != 9000 {
+		t.Errorf("expected port 9000, got %d", cfg.Server.Port)
+	}
+	if cfg.Log.Level != "debug" {
+		t.Errorf("expected log level debug, got %q", cfg.Log.Level)
+	}
+}
+
+func TestLoadWithWatch_MissingFile(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "nonexistent.yaml")
+	cfg, err := LoadWithWatch(missingPath, nil)
+	if err != nil {
+		t.Fatalf("LoadWithWatch should not fail for missing file: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("LoadWithWatch should return default config")
+	}
+}
+
+func TestLoadProviders_MissingFile(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "providers.json")
+	cfg, err := LoadProviders(missingPath)
+	if err != nil {
+		t.Fatalf("LoadProviders should not fail for missing file: %v", err)
+	}
+	if cfg != nil {
+		t.Fatal("LoadProviders should return nil for missing file")
+	}
+}
+
+func TestLoadProviders_ValidFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "providers.json")
+	content := `{"providers": {"openai": {"provider": "openai", "model": "gpt-4"}}}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write providers: %v", err)
+	}
+
+	cfg, err := LoadProviders(path)
+	if err != nil {
+		t.Fatalf("LoadProviders failed: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("LoadProviders should return config")
+	}
+	if cfg.Providers == nil {
+		t.Fatal("LoadProviders should have providers map")
+	}
+	if len(cfg.Providers) != 1 {
+		t.Errorf("expected 1 provider, got %d", len(cfg.Providers))
+	}
+}
+
+func TestLoadProviders_EmptyProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "providers.json")
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatalf("write providers: %v", err)
+	}
+
+	cfg, err := LoadProviders(path)
+	if err != nil {
+		t.Fatalf("LoadProviders failed: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("LoadProviders should return config")
+	}
+	if cfg.Providers == nil {
+		t.Fatal("LoadProviders should initialize providers map")
+	}
+}
+
+func TestAgentConfig_ResolveWorkingDir(t *testing.T) {
+	tests := []struct {
+		name         string
+		workingDir   string
+		emptyHome    bool
+		wantContains string
+	}{
+		{"empty working dir", "", false, ".gopherpaw"},
+		{"relative path", "./data", false, "data"},
+		{"absolute path", "/tmp/test", false, "/tmp/test"},
+		{"tilde path", "~/test", false, "/test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := AgentConfig{WorkingDir: tt.workingDir}
+			result := cfg.ResolveWorkingDir()
+			if result == "" {
+				t.Error("ResolveWorkingDir should not return empty")
+			}
+		})
+	}
+}
+
+func TestMemoryConfig_ResolveDBPath(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"relative path", "./data/test.db"},
+		{"absolute path", "/tmp/test.db"},
+		{"tilde path", "~/data/test.db"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := MemoryConfig{DBPath: tt.path}
+			result := cfg.ResolveDBPath()
+			if result == "" {
+				t.Error("ResolveDBPath should not return empty")
+			}
+		})
+	}
+}
+
+func TestValidate_AllEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("log:\n  level: info\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	os.Setenv("GOPHERPAW_LLM_API_KEY", "sk-test-key")
+	os.Setenv("GOPHERPAW_LLM_BASE_URL", "https://test.com")
+	os.Setenv("GOPHERPAW_LLM_MODEL", "gpt-4")
+	os.Setenv("GOPHERPAW_LOG_LEVEL", "debug")
+	os.Setenv("GOPHERPAW_LOG_FORMAT", "console")
+	os.Setenv("GOPHERPAW_MEMORY_WORKING_DIR", "/tmp/mem")
+	os.Setenv("GOPHERPAW_EMBEDDING_API_KEY", "sk-embed-key")
+	os.Setenv("GOPHERPAW_EMBEDDING_BASE_URL", "https://embed.com")
+	os.Setenv("GOPHERPAW_EMBEDDING_MODEL", "text-embed")
+	os.Setenv("GOPHERPAW_WORKING_DIR", "/tmp/work")
+	defer os.Unsetenv("GOPHERPAW_LLM_API_KEY")
+	defer os.Unsetenv("GOPHERPAW_LLM_BASE_URL")
+	defer os.Unsetenv("GOPHERPAW_LLM_MODEL")
+	defer os.Unsetenv("GOPHERPAW_LOG_LEVEL")
+	defer os.Unsetenv("GOPHERPAW_LOG_FORMAT")
+	defer os.Unsetenv("GOPHERPAW_MEMORY_WORKING_DIR")
+	defer os.Unsetenv("GOPHERPAW_EMBEDDING_API_KEY")
+	defer os.Unsetenv("GOPHERPAW_EMBEDDING_BASE_URL")
+	defer os.Unsetenv("GOPHERPAW_EMBEDDING_MODEL")
+	defer os.Unsetenv("GOPHERPAW_WORKING_DIR")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.LLM.APIKey != "sk-test-key" {
+		t.Errorf("expected API key from env, got %q", cfg.LLM.APIKey)
+	}
+	if cfg.LLM.BaseURL != "https://test.com" {
+		t.Errorf("expected BaseURL from env, got %q", cfg.LLM.BaseURL)
+	}
+	if cfg.LLM.Model != "gpt-4" {
+		t.Errorf("expected Model from env, got %q", cfg.LLM.Model)
+	}
+	if cfg.Log.Level != "debug" {
+		t.Errorf("expected log level from env, got %q", cfg.Log.Level)
+	}
+	if cfg.Log.Format != "console" {
+		t.Errorf("expected log format from env, got %q", cfg.Log.Format)
+	}
+	if cfg.Memory.WorkingDir != "/tmp/mem" {
+		t.Errorf("expected Memory.WorkingDir from env, got %q", cfg.Memory.WorkingDir)
+	}
+	if cfg.Memory.EmbeddingAPIKey != "sk-embed-key" {
+		t.Errorf("expected EmbeddingAPIKey from env, got %q", cfg.Memory.EmbeddingAPIKey)
+	}
+	if cfg.Memory.EmbeddingBaseURL != "https://embed.com" {
+		t.Errorf("expected EmbeddingBaseURL from env, got %q", cfg.Memory.EmbeddingBaseURL)
+	}
+	if cfg.Memory.EmbeddingModel != "text-embed" {
+		t.Errorf("expected EmbeddingModel from env, got %q", cfg.Memory.EmbeddingModel)
+	}
+	if cfg.WorkingDir != "/tmp/work" {
+		t.Errorf("expected WorkingDir from env, got %q", cfg.WorkingDir)
 	}
 }

@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -731,4 +732,233 @@ func TestCronScheduler_ConcurrentAddJob(t *testing.T) {
 	if successCount != 10 {
 		t.Errorf("Concurrent AddJob: got %d successful adds, want 10", successCount)
 	}
+}
+
+type mockAgentFail struct {
+	failRun bool
+}
+
+func (m *mockAgentFail) Run(ctx context.Context, chatID string, message string) (string, error) {
+	if m.failRun {
+		return "", fmt.Errorf("mock agent run failed")
+	}
+	return "ok", nil
+}
+
+func (m *mockAgentFail) RunStream(ctx context.Context, chatID string, message string) (<-chan string, error) {
+	ch := make(chan string, 1)
+	ch <- "ok"
+	close(ch)
+	return ch, nil
+}
+
+type mockDispatcherFail struct {
+	failSend bool
+	sendErr  error
+	lastCh   string
+	lastUID  string
+	lastSID  string
+}
+
+func (m *mockDispatcherFail) Send(ctx context.Context, channel, to, text string) error {
+	m.lastCh = channel
+	m.lastUID = to
+	m.lastSID = text
+	if m.failSend {
+		if m.sendErr != nil {
+			return m.sendErr
+		}
+		return fmt.Errorf("mock dispatcher send failed")
+	}
+	return nil
+}
+
+func (m *mockDispatcherFail) LastDispatch() (channel, userID, sessionID string) {
+	return m.lastCh, m.lastUID, m.lastSID
+}
+
+func TestHeartbeatRunner_RunOnce_LoaderError(t *testing.T) {
+	ag := &mockAgentFail{}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "",
+	}
+	dispatcher := &mockDispatcherFail{}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
+}
+
+func TestHeartbeatRunner_RunOnce_EmptyContent(t *testing.T) {
+	ag := &mockAgentFail{}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	heartbeatPath := tmpDir + "/HEARTBEAT.md"
+	if err := os.WriteFile(heartbeatPath, []byte(""), 0644); err != nil {
+		t.Fatalf("Failed to write empty HEARTBEAT.md: %v", err)
+	}
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "",
+	}
+	dispatcher := &mockDispatcherFail{}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
+}
+
+func TestHeartbeatRunner_RunOnce_AgentFail(t *testing.T) {
+	ag := &mockAgentFail{failRun: true}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	heartbeatPath := tmpDir + "/HEARTBEAT.md"
+	if err := os.WriteFile(heartbeatPath, []byte("heartbeat content"), 0644); err != nil {
+		t.Fatalf("Failed to write HEARTBEAT.md: %v", err)
+	}
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "",
+	}
+	dispatcher := &mockDispatcherFail{}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
+}
+
+func TestHeartbeatRunner_RunOnce_TargetLast(t *testing.T) {
+	ag := &mockAgentFail{}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	heartbeatPath := tmpDir + "/HEARTBEAT.md"
+	if err := os.WriteFile(heartbeatPath, []byte("heartbeat content"), 0644); err != nil {
+		t.Fatalf("Failed to write HEARTBEAT.md: %v", err)
+	}
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "last",
+	}
+	dispatcher := &mockDispatcherFail{
+		lastCh:  "test-channel",
+		lastUID: "user123",
+		lastSID: "test-channel:session456",
+	}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
+}
+
+func TestHeartbeatRunner_RunOnce_SendFail(t *testing.T) {
+	ag := &mockAgentFail{}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	heartbeatPath := tmpDir + "/HEARTBEAT.md"
+	if err := os.WriteFile(heartbeatPath, []byte("heartbeat content"), 0644); err != nil {
+		t.Fatalf("Failed to write HEARTBEAT.md: %v", err)
+	}
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "last",
+	}
+	dispatcher := &mockDispatcherFail{
+		failSend: true,
+		lastCh:   "test-channel",
+		lastUID:  "user123",
+		lastSID:  "test-channel:session456",
+	}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
+}
+
+func TestHeartbeatRunner_RunOnce_OutsideActiveHours(t *testing.T) {
+	ag := &mockAgentFail{}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	heartbeatPath := tmpDir + "/HEARTBEAT.md"
+	if err := os.WriteFile(heartbeatPath, []byte("heartbeat content"), 0644); err != nil {
+		t.Fatalf("Failed to write HEARTBEAT.md: %v", err)
+	}
+	now := time.Now()
+	hour := (now.Hour() + 12) % 24
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "",
+		ActiveHours: &config.ActiveHours{
+			Start: fmt.Sprintf("%02d:00", hour),
+			End:   fmt.Sprintf("%02d:00", hour),
+		},
+	}
+	dispatcher := &mockDispatcherFail{}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
+}
+
+func TestHeartbeatRunner_RunOnce_Success(t *testing.T) {
+	ag := &mockAgent{}
+	tmpDir := t.TempDir()
+	loader := agent.NewPromptLoader(tmpDir, "")
+	heartbeatPath := tmpDir + "/HEARTBEAT.md"
+	if err := os.WriteFile(heartbeatPath, []byte("heartbeat content"), 0644); err != nil {
+		t.Fatalf("Failed to write HEARTBEAT.md: %v", err)
+	}
+	cfg := config.HeartbeatConfig{
+		Every:  "1s",
+		Target: "",
+	}
+	dispatcher := &mockDispatcherFail{}
+
+	runner := NewHeartbeatRunner(ag, loader, cfg, dispatcher)
+	ctx := context.Background()
+
+	if err := runner.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer runner.Stop()
+
+	time.Sleep(2 * time.Second)
 }

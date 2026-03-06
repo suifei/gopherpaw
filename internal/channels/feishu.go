@@ -222,9 +222,9 @@ func (c *FeishuChannel) HandleEvent(ctx context.Context, body []byte) error {
 		Channel:   "feishu",
 		Timestamp: time.Now().Unix(),
 		Metadata: map[string]string{
-			"chat_id":        evt.Event.Message.ChatID,
-			"chat_type":      evt.Event.Message.ChatType,
-			"receive_id":     evt.Event.Message.ChatID,
+			"chat_id":         evt.Event.Message.ChatID,
+			"chat_type":       evt.Event.Message.ChatType,
+			"receive_id":      evt.Event.Message.ChatID,
 			"receive_id_type": "chat_id",
 		},
 	}

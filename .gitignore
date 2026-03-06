@@ -7,6 +7,10 @@ go.sum
 *.exe.old~
 
 *.db
+*.out
+coverage.*
+
+
 ai_collaboration_guide.md
 CONTEXT.md
 
@@ -17,3 +21,17 @@ docs/api_spec.md
 docs/architecture_spec.md
 docs/feature_matrix.md
 AGENTS.md
+docs/benchmark_summary.md
+
+
+BENCHMARKS_SUMMARY.md
+gopherpaw
+docs/concurrency_analysis_report.md
+docs/copaw_python_files.txt
+docs/copaw_to_gopherpaw_plan.md
+docs/coverage_report_final.md
+docs/race_detection_guide.md
+docs/copaw_python_files.txt
+docs/copaw_to_gopherpaw_plan.md
+scripts/list_copaw_python_files.sh
+scripts/print_plan_prompts.ps1
