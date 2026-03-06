@@ -5,33 +5,148 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+
+	tiktoken "github.com/pkoukk/tiktoken-go"
 )
 
-// TokenCounter provides token counting for messages and strings.
+// TokenCounter provides token counting using tiktoken for accurate token estimation.
+// It lazily initializes the encoder on first use and caches it for performance.
 type TokenCounter struct {
-	mu   sync.Once
-	name string
+	mu      sync.Once
+	encoder *tiktoken.Tiktoken
+	model   string
 }
 
-var defaultCounter = &TokenCounter{name: "estimate"}
+// defaultEncoder is the package-level tiktoken encoder, initialized lazily.
+var (
+	defaultEncoderMu   sync.Once
+	defaultEncoder     *tiktoken.Tiktoken
+	defaultEncoderInit bool
+)
 
-// CountMessageTokens estimates the token count for a list of messages.
-// Uses character-based estimation (len/4) as a portable fallback.
-func CountMessageTokens(messages []Message) int {
+// initDefaultEncoder initializes the default tiktoken encoder.
+// Uses cl100k_base encoding (GPT-4, GPT-3.5-turbo, text-embedding-ada-002).
+func initDefaultEncoder() {
+	defaultEncoderMu.Do(func() {
+		enc, err := tiktoken.GetEncoding("cl100k_base")
+		if err == nil {
+			defaultEncoder = enc
+			defaultEncoderInit = true
+		}
+	})
+}
+
+// NewTokenCounter creates a TokenCounter for a specific model.
+// Supported models include gpt-4, gpt-3.5-turbo, claude, etc.
+// Falls back to cl100k_base encoding if model-specific encoding is not available.
+func NewTokenCounter(model string) *TokenCounter {
+	tc := &TokenCounter{model: model}
+	return tc
+}
+
+// getEncoder returns the tiktoken encoder, initializing if needed.
+func (tc *TokenCounter) getEncoder() *tiktoken.Tiktoken {
+	tc.mu.Do(func() {
+		if tc.model != "" {
+			// Try model-specific encoding first
+			enc, err := tiktoken.EncodingForModel(tc.model)
+			if err == nil {
+				tc.encoder = enc
+				return
+			}
+		}
+		// Fall back to default cl100k_base
+		initDefaultEncoder()
+		tc.encoder = defaultEncoder
+	})
+	return tc.encoder
+}
+
+// Count returns the token count for a string using tiktoken.
+// Falls back to character-based estimation if encoder is unavailable.
+func (tc *TokenCounter) Count(text string) int {
+	if text == "" {
+		return 0
+	}
+	enc := tc.getEncoder()
+	if enc != nil {
+		return len(enc.Encode(text, nil, nil))
+	}
+	// Fallback: character-based estimation
+	return estimateFallback(text)
+}
+
+// CountMessages returns the token count for a list of messages.
+func (tc *TokenCounter) CountMessages(messages []Message) int {
 	total := 0
 	for _, m := range messages {
-		total += CountStringTokens(extractMessageText(m))
+		total += tc.Count(extractMessageText(m))
+		total += 4 // per-message overhead (role, name, etc.)
+	}
+	return total
+}
+
+// estimateFallback provides character-based estimation when tiktoken is unavailable.
+// Uses different ratios for CJK vs ASCII characters.
+func estimateFallback(text string) int {
+	cjkCount := 0
+	for _, r := range text {
+		if r >= 0x4e00 && r <= 0x9fff {
+			cjkCount++
+		}
+	}
+	// CJK characters are roughly 1.5-2 tokens each, ASCII roughly 4 chars per token
+	asciiCount := len(text) - cjkCount*3 // rough byte adjustment for CJK
+	if asciiCount < 0 {
+		asciiCount = 0
+	}
+	return asciiCount/4 + cjkCount*2
+}
+
+// CountMessageTokens returns the token count for a list of messages using tiktoken.
+// This is the primary function for accurate token counting.
+func CountMessageTokens(messages []Message) int {
+	initDefaultEncoder()
+	total := 0
+	for _, m := range messages {
+		text := extractMessageText(m)
+		if defaultEncoder != nil {
+			total += len(defaultEncoder.Encode(text, nil, nil))
+		} else {
+			total += estimateFallback(text)
+		}
 		total += 4 // per-message overhead
 	}
 	return total
 }
 
-// CountStringTokens estimates the token count for a string.
+// CountStringTokens returns the token count for a string using tiktoken.
 func CountStringTokens(text string) int {
 	if text == "" {
 		return 0
 	}
-	return len(text) / 4
+	initDefaultEncoder()
+	if defaultEncoder != nil {
+		return len(defaultEncoder.Encode(text, nil, nil))
+	}
+	return estimateFallback(text)
+}
+
+// CountStringTokensForModel returns the token count using model-specific encoding.
+func CountStringTokensForModel(text, model string) int {
+	if text == "" {
+		return 0
+	}
+	enc, err := tiktoken.EncodingForModel(model)
+	if err != nil {
+		// Fall back to cl100k_base
+		initDefaultEncoder()
+		if defaultEncoder != nil {
+			return len(defaultEncoder.Encode(text, nil, nil))
+		}
+		return estimateFallback(text)
+	}
+	return len(enc.Encode(text, nil, nil))
 }
 
 // SafeCountMessageTokens is a safe wrapper that never panics.

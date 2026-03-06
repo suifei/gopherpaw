@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sashabaranov/go-openai"
 	"github.com/suifei/gopherpaw/internal/agent"
 	"github.com/suifei/gopherpaw/internal/config"
 )
@@ -68,5 +69,153 @@ func TestRegistry_Create_Unknown(t *testing.T) {
 	_, err := Create(cfg)
 	if err == nil {
 		t.Error("Create with unknown provider should fail")
+	}
+}
+
+func TestStreamToolCallAccumulator_Accumulate(t *testing.T) {
+	acc := newStreamToolCallAccumulator()
+
+	// Simulate first chunk with ID and Name
+	idx0 := 0
+	chunk1 := []openai.ToolCall{
+		{
+			Index: &idx0,
+			ID:    "call_123",
+			Function: openai.FunctionCall{
+				Name:      "read_file",
+				Arguments: `{"path":`,
+			},
+		},
+	}
+	result := acc.accumulate(chunk1)
+	if len(result) != 1 {
+		t.Fatalf("accumulate chunk1: got %d tool_calls, want 1", len(result))
+	}
+	if result[0].ID != "call_123" {
+		t.Errorf("ID = %q, want call_123", result[0].ID)
+	}
+	if result[0].Name != "read_file" {
+		t.Errorf("Name = %q, want read_file", result[0].Name)
+	}
+	if result[0].Arguments != `{"path":` {
+		t.Errorf("Arguments = %q, want {\"path\":", result[0].Arguments)
+	}
+
+	// Simulate subsequent chunk with Arguments fragment
+	chunk2 := []openai.ToolCall{
+		{
+			Index: &idx0,
+			Function: openai.FunctionCall{
+				Arguments: `"test.txt"}`,
+			},
+		},
+	}
+	result = acc.accumulate(chunk2)
+	if len(result) != 1 {
+		t.Fatalf("accumulate chunk2: got %d tool_calls, want 1", len(result))
+	}
+	want := `{"path":"test.txt"}`
+	if result[0].Arguments != want {
+		t.Errorf("Arguments = %q, want %q", result[0].Arguments, want)
+	}
+}
+
+func TestStreamToolCallAccumulator_MultipleToolCalls(t *testing.T) {
+	acc := newStreamToolCallAccumulator()
+
+	idx0 := 0
+	idx1 := 1
+
+	// First tool_call
+	acc.accumulate([]openai.ToolCall{
+		{
+			Index:    &idx0,
+			ID:       "call_A",
+			Function: openai.FunctionCall{Name: "tool_a", Arguments: `{"a":1}`},
+		},
+	})
+
+	// Second tool_call
+	acc.accumulate([]openai.ToolCall{
+		{
+			Index:    &idx1,
+			ID:       "call_B",
+			Function: openai.FunctionCall{Name: "tool_b", Arguments: `{"b":2}`},
+		},
+	})
+
+	result := acc.snapshot()
+	if len(result) != 2 {
+		t.Fatalf("snapshot: got %d tool_calls, want 2", len(result))
+	}
+	if result[0].ID != "call_A" || result[1].ID != "call_B" {
+		t.Errorf("IDs = [%s, %s], want [call_A, call_B]", result[0].ID, result[1].ID)
+	}
+}
+
+func TestStreamToolCallAccumulator_Sanitize(t *testing.T) {
+	acc := newStreamToolCallAccumulator()
+
+	idx0 := 0
+	idx1 := 1
+	idx2 := 2
+
+	// Valid tool_call
+	acc.accumulate([]openai.ToolCall{
+		{
+			Index:    &idx0,
+			ID:       "call_valid",
+			Function: openai.FunctionCall{Name: "valid_tool", Arguments: `{"key":"value"}`},
+		},
+	})
+
+	// Invalid: missing ID
+	acc.accumulate([]openai.ToolCall{
+		{
+			Index:    &idx1,
+			ID:       "",
+			Function: openai.FunctionCall{Name: "no_id", Arguments: `{}`},
+		},
+	})
+
+	// Invalid: missing Name
+	acc.accumulate([]openai.ToolCall{
+		{
+			Index:    &idx2,
+			ID:       "call_no_name",
+			Function: openai.FunctionCall{Name: "", Arguments: `{}`},
+		},
+	})
+
+	result := acc.sanitize()
+	if len(result) != 1 {
+		t.Fatalf("sanitize: got %d tool_calls, want 1 (valid only)", len(result))
+	}
+	if result[0].ID != "call_valid" {
+		t.Errorf("ID = %q, want call_valid", result[0].ID)
+	}
+}
+
+func TestSanitizeJSONArguments(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "valid", input: `{"key":"value"}`, want: `{"key":"value"}`},
+		{name: "empty", input: "", want: "{}"},
+		{name: "whitespace", input: "  ", want: "{}"},
+		{name: "unclosed_brace", input: `{"key":"value"`, want: `{"key":"value"}`},
+		{name: "unclosed_array", input: `{"arr":[1,2`, want: `{"arr":[1,2]}`},
+		{name: "invalid_unfixable", input: `{{{`, want: "{}"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeJSONArguments(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeJSONArguments(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

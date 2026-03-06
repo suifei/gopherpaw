@@ -14,6 +14,112 @@ func TestCountStringTokens(t *testing.T) {
 	}
 }
 
+// TestCountStringTokens_Tiktoken verifies tiktoken provides accurate token counts.
+// These expected values are based on cl100k_base encoding (GPT-4, GPT-3.5-turbo).
+func TestCountStringTokens_Tiktoken(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantMin int // minimum expected tokens
+		wantMax int // maximum expected tokens
+	}{
+		{
+			name:    "simple english",
+			input:   "Hello, world!",
+			wantMin: 3,
+			wantMax: 5,
+		},
+		{
+			name:    "code snippet",
+			input:   "func main() { fmt.Println(\"hello\") }",
+			wantMin: 10,
+			wantMax: 20,
+		},
+		{
+			name:    "chinese text",
+			input:   "你好世界",
+			wantMin: 2,
+			wantMax: 8,
+		},
+		{
+			name:    "mixed cjk and english",
+			input:   "Hello 你好 World 世界",
+			wantMin: 4,
+			wantMax: 12,
+		},
+		{
+			name:    "json data",
+			input:   `{"name": "test", "value": 123, "nested": {"key": "value"}}`,
+			wantMin: 15,
+			wantMax: 30,
+		},
+		{
+			name:    "long text",
+			input:   "The quick brown fox jumps over the lazy dog. This is a common pangram used in typography.",
+			wantMin: 15,
+			wantMax: 25,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CountStringTokens(tt.input)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("CountStringTokens(%q) = %d, want between %d and %d",
+					tt.input, got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
+// TestTokenCounter_ModelSpecific tests model-specific token counting.
+func TestTokenCounter_ModelSpecific(t *testing.T) {
+	tests := []struct {
+		model string
+		input string
+	}{
+		{"gpt-4", "Hello, world!"},
+		{"gpt-3.5-turbo", "Hello, world!"},
+		{"text-embedding-ada-002", "Hello, world!"},
+		{"unknown-model", "Hello, world!"}, // should fall back to cl100k_base
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			tc := NewTokenCounter(tt.model)
+			n := tc.Count(tt.input)
+			if n <= 0 {
+				t.Errorf("TokenCounter(%s).Count(%q) = %d, want > 0", tt.model, tt.input, n)
+			}
+		})
+	}
+}
+
+// TestCountStringTokensForModel tests model-specific counting via helper function.
+func TestCountStringTokensForModel(t *testing.T) {
+	input := "Hello, this is a test message for token counting."
+
+	gpt4Count := CountStringTokensForModel(input, "gpt-4")
+	gpt35Count := CountStringTokensForModel(input, "gpt-3.5-turbo")
+	unknownCount := CountStringTokensForModel(input, "unknown-model")
+
+	// All should return positive counts
+	if gpt4Count <= 0 {
+		t.Errorf("gpt-4 count should be positive, got %d", gpt4Count)
+	}
+	if gpt35Count <= 0 {
+		t.Errorf("gpt-3.5-turbo count should be positive, got %d", gpt35Count)
+	}
+	if unknownCount <= 0 {
+		t.Errorf("unknown model count should be positive, got %d", unknownCount)
+	}
+
+	// GPT-4 and GPT-3.5-turbo use the same encoding (cl100k_base), so counts should match
+	if gpt4Count != gpt35Count {
+		t.Errorf("gpt-4 (%d) and gpt-3.5-turbo (%d) should have same token count", gpt4Count, gpt35Count)
+	}
+}
+
 func TestCountMessageTokens(t *testing.T) {
 	msgs := []Message{
 		{Role: "user", Content: "hello world"},

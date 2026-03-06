@@ -12,8 +12,8 @@ import (
 type Factory func(cfg config.LLMConfig) (agent.LLMProvider, error)
 
 var (
-	mu        sync.RWMutex
-	registry  = make(map[string]Factory)
+	mu       sync.RWMutex
+	registry = make(map[string]Factory)
 )
 
 func init() {
@@ -22,6 +22,9 @@ func init() {
 	})
 	Register("ollama", func(cfg config.LLMConfig) (agent.LLMProvider, error) {
 		return NewOllama(cfg)
+	})
+	Register("anthropic", func(cfg config.LLMConfig) (agent.LLMProvider, error) {
+		return NewAnthropic(cfg)
 	})
 }
 

@@ -11,17 +11,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/suifei/gopherpaw/internal/agent"
 	"github.com/suifei/gopherpaw/internal/channels"
 	"github.com/suifei/gopherpaw/internal/config"
 	"github.com/suifei/gopherpaw/internal/llm"
+	"github.com/suifei/gopherpaw/internal/mcp"
 	"github.com/suifei/gopherpaw/internal/memory"
 	"github.com/suifei/gopherpaw/internal/runtime"
 	"github.com/suifei/gopherpaw/internal/scheduler"
 	"github.com/suifei/gopherpaw/internal/skills"
 	"github.com/suifei/gopherpaw/internal/tools"
 	"github.com/suifei/gopherpaw/pkg/logger"
-	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
@@ -113,6 +114,24 @@ func runApp(cmd *cobra.Command, args []string) error {
 		memoryStore := memory.New(cfg.Memory)
 		toolsList := tools.RegisterBuiltin()
 		log.Info("Memory and tools ready", zap.Int("tools", len(toolsList)))
+
+		// Initialize MCP Manager and load tools from MCP servers
+		mcpMgr := mcp.NewManager()
+		if len(cfg.MCP.Servers) > 0 {
+			if err := mcpMgr.LoadConfig(cfg.MCP.Servers); err != nil {
+				log.Warn("MCP config load failed", zap.Error(err))
+			}
+			mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := mcpMgr.Start(mcpCtx); err != nil {
+				log.Warn("MCP manager start failed", zap.Error(err))
+			}
+			mcpCancel()
+			mcpTools := mcpMgr.GetTools()
+			if len(mcpTools) > 0 {
+				toolsList = append(toolsList, mcpTools...)
+				log.Info("MCP tools loaded", zap.Int("mcpTools", len(mcpTools)), zap.Int("totalTools", len(toolsList)))
+			}
+		}
 
 		configDir := filepath.Dir(cfgPath)
 		skillMgr := skills.NewManager()
@@ -211,6 +230,10 @@ func runApp(cmd *cobra.Command, args []string) error {
 		}
 		if err := webhookSrv.Stop(shutdownCtx); err != nil {
 			log.Warn("webhook stop", zap.Error(err))
+		}
+		// Stop MCP manager
+		if err := mcpMgr.Stop(); err != nil {
+			log.Warn("mcp stop", zap.Error(err))
 		}
 		<-webhookDone
 		shutdownCancel()

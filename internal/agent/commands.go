@@ -169,11 +169,7 @@ func truncateForHistory(s string, maxLen int) string {
 }
 
 func estimateTokensForHistory(msgs []Message) int {
-	n := 0
-	for _, m := range msgs {
-		n += len(m.Content)/4 + 1
-	}
-	return n
+	return CountMessageTokens(msgs)
 }
 
 func min(a, b int) int {

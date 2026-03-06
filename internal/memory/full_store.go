@@ -34,10 +34,10 @@ func NewFullMemoryStore(cfg config.MemoryConfig, llm agent.LLMProvider) agent.Me
 	}
 	embed := NewEmbeddingClient(cfg)
 	hybrid := NewHybridSearcher(embed, &struct {
-		VectorWeight   float64
-		BM25Weight     float64
-		CandidateMul   int
-		MaxCandidates  int
+		VectorWeight  float64
+		BM25Weight    float64
+		CandidateMul  int
+		MaxCandidates int
 	}{
 		VectorWeight:  0.7,
 		BM25Weight:    0.3,
@@ -209,3 +209,12 @@ func (s *FullMemoryStore) SaveLongTerm(ctx context.Context, chatID string, conte
 func (s *FullMemoryStore) LoadLongTerm(ctx context.Context, chatID string) (string, error) {
 	return s.fileStore.LoadLongTerm(ctx, chatID)
 }
+
+// SummaryMemory generates a standalone summary of the given messages.
+// Implements agent.MemorySummarizer interface.
+func (s *FullMemoryStore) SummaryMemory(ctx context.Context, messages []agent.Message) (string, error) {
+	return s.compactor.SummaryMemory(ctx, messages)
+}
+
+// Ensure FullMemoryStore implements MemorySummarizer.
+var _ agent.MemorySummarizer = (*FullMemoryStore)(nil)

@@ -82,12 +82,32 @@ type ChatStream interface {
 	Close() error
 }
 
+// ToolChoiceMode specifies how the model should select tools.
+type ToolChoiceMode string
+
+const (
+	// ToolChoiceAuto lets the model decide whether to call tools (default).
+	ToolChoiceAuto ToolChoiceMode = "auto"
+	// ToolChoiceNone prevents the model from calling any tools.
+	ToolChoiceNone ToolChoiceMode = "none"
+	// ToolChoiceRequired forces the model to call at least one tool.
+	ToolChoiceRequired ToolChoiceMode = "required"
+)
+
+// ToolChoice specifies tool selection behavior for chat completion.
+// Use mode for auto/none/required, or set ForceTool for a specific tool.
+type ToolChoice struct {
+	Mode      ToolChoiceMode `json:"mode,omitempty"`       // auto, none, required
+	ForceTool string         `json:"force_tool,omitempty"` // specific tool name to force
+}
+
 // ChatRequest holds the input for a chat completion.
 type ChatRequest struct {
-	Messages    []Message `json:"messages"`
-	Tools       []ToolDef `json:"tools,omitempty"`
-	Temperature float64   `json:"temperature,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Messages    []Message   `json:"messages"`
+	Tools       []ToolDef   `json:"tools,omitempty"`
+	ToolChoice  *ToolChoice `json:"tool_choice,omitempty"` // nil defaults to auto
+	Temperature float64     `json:"temperature,omitempty"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
 }
 
 // ChatResponse holds the output of a chat completion.
@@ -154,6 +174,13 @@ type MemoryStore interface {
 
 	// LoadLongTerm loads all long-term memory content for a chat.
 	LoadLongTerm(ctx context.Context, chatID string) (string, error)
+}
+
+// MemorySummarizer is an optional extension for generating standalone summaries.
+// MemoryStore implementations may implement this interface for /compact_str and similar features.
+type MemorySummarizer interface {
+	// SummaryMemory generates a summary of the given messages without modifying history.
+	SummaryMemory(ctx context.Context, messages []Message) (string, error)
 }
 
 // MemoryResult represents a search hit from memory.

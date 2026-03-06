@@ -16,3 +16,4 @@ config.yaml
 docs/api_spec.md
 docs/architecture_spec.md
 docs/feature_matrix.md
+AGENTS.md

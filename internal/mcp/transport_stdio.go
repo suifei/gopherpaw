@@ -14,10 +14,10 @@ import (
 
 // StdioTransport implements Transport using subprocess stdin/stdout.
 type StdioTransport struct {
-	cmd    string
-	args   []string
-	env    map[string]string
-	cwd    string
+	cmd  string
+	args []string
+	env  map[string]string
+	cwd  string
 
 	process *exec.Cmd
 	stdin   *bufio.Writer
@@ -37,11 +37,19 @@ func NewStdioTransport(cfg config.MCPServerConfig) *StdioTransport {
 }
 
 // Start launches the subprocess and establishes stdin/stdout pipes.
+// If ctx has no deadline, a default 30-second timeout is applied for startup.
 func (t *StdioTransport) Start(ctx context.Context) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.running {
 		return nil
+	}
+
+	// Apply default startup timeout if context has no deadline
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
 	}
 
 	t.process = exec.CommandContext(ctx, t.cmd, t.args...)

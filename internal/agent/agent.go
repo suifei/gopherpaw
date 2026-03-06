@@ -23,6 +23,7 @@ type ReactAgent struct {
 	cfg           config.AgentConfig
 	loader        *PromptLoader
 	skillsContent string
+	hooks         []Hook
 }
 
 // NewReact creates a ReAct agent with the given dependencies.
@@ -44,7 +45,19 @@ func NewReactWithPrompt(llm LLMProvider, memory MemoryStore, tools []Tool, cfg c
 		cfg:           cfg,
 		loader:        loader,
 		skillsContent: skillsContent,
+		hooks:         nil,
 	}
+}
+
+// AddHook registers a hook to be called before each ReAct turn.
+// Hooks are executed in the order they are added.
+func (a *ReactAgent) AddHook(h Hook) {
+	a.hooks = append(a.hooks, h)
+}
+
+// AddHooks registers multiple hooks.
+func (a *ReactAgent) AddHooks(hooks ...Hook) {
+	a.hooks = append(a.hooks, hooks...)
 }
 
 // Run processes a message through the ReAct loop and returns the final response.
@@ -102,6 +115,14 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 			return "", err
 		}
 
+		// Execute hooks before each turn
+		for _, hook := range a.hooks {
+			messages, err = hook(ctx, a, chatID, messages)
+			if err != nil {
+				return "", fmt.Errorf("hook error: %w", err)
+			}
+		}
+
 		log.Debug("ReAct turn",
 			zap.Int("turn", turn+1),
 			zap.Int("maxTurns", maxTurns),
@@ -119,7 +140,7 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 			Messages:    messages,
 			Tools:       toolDefs,
 			Temperature: 0.7,
-			MaxTokens:  4096,
+			MaxTokens:   4096,
 		}
 
 		a.llmMu.RLock()
@@ -140,9 +161,9 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 
 		// Save assistant message
 		assistantMsg := Message{
-			Role:       "assistant",
-			Content:    resp.Content,
-			ToolCalls:  resp.ToolCalls,
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
 		}
 		if err := a.memory.Save(ctx, chatID, assistantMsg); err != nil {
 			return "", fmt.Errorf("save assistant message: %w", err)
@@ -154,34 +175,24 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 			break
 		}
 
-		// Append assistant message, then execute tools and append results
+		// Append assistant message, then execute tools in parallel and append results
 		messages = append(messages, assistantMsg)
-		for _, tc := range resp.ToolCalls {
-			log.Info("Calling tool",
-				zap.String("tool", tc.Name),
-				zap.String("args", truncate(tc.Arguments, 500)),
-			)
-			if reporter != nil {
-				reporter.OnToolCall(tc.Name, tc.Arguments)
-			}
+		toolResults := a.executeToolsParallel(ctx, chatID, resp.ToolCalls, reporter)
 
-			result, err := a.executeTool(ctx, chatID, tc)
-			if err != nil {
-				result = fmt.Sprintf("Error: %v", err)
-			}
-
+		// Append tool results in order (matching tool_call order)
+		for i, tr := range toolResults {
 			log.Debug("Tool result",
-				zap.String("tool", tc.Name),
-				zap.String("result", truncate(result, 500)),
+				zap.String("tool", resp.ToolCalls[i].Name),
+				zap.String("result", truncate(tr.Result, 500)),
 			)
 			if reporter != nil {
-				reporter.OnToolResult(tc.Name, result)
+				reporter.OnToolResult(resp.ToolCalls[i].Name, tr.Result)
 			}
 
 			toolMsg := Message{
 				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
+				Content:    tr.Result,
+				ToolCallID: resp.ToolCalls[i].ID,
 			}
 			messages = append(messages, toolMsg)
 			if err := a.memory.Save(ctx, chatID, toolMsg); err != nil {
@@ -245,11 +256,77 @@ func (a *ReactAgent) executeTool(ctx context.Context, chatID string, tc ToolCall
 	return tool.Execute(ctx, tc.Arguments)
 }
 
+// toolResult holds the result of a parallel tool execution.
+type toolResult struct {
+	Result string
+	Err    error
+}
+
+// executeToolsParallel executes multiple tool calls concurrently and returns
+// results in the same order as the input toolCalls slice.
+func (a *ReactAgent) executeToolsParallel(ctx context.Context, chatID string, toolCalls []ToolCall, reporter ProgressReporter) []toolResult {
+	log := logger.L()
+	n := len(toolCalls)
+	if n == 0 {
+		return nil
+	}
+
+	// For single tool, no need for goroutines
+	if n == 1 {
+		tc := toolCalls[0]
+		log.Info("Calling tool",
+			zap.String("tool", tc.Name),
+			zap.String("args", truncate(tc.Arguments, 500)),
+		)
+		if reporter != nil {
+			reporter.OnToolCall(tc.Name, tc.Arguments)
+		}
+		result, err := a.executeTool(ctx, chatID, tc)
+		if err != nil {
+			result = fmt.Sprintf("Error: %v", err)
+		}
+		return []toolResult{{Result: result, Err: err}}
+	}
+
+	// Parallel execution for multiple tools
+	log.Info("Executing tools in parallel", zap.Int("count", n))
+	results := make([]toolResult, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	for i, tc := range toolCalls {
+		go func(idx int, tc ToolCall) {
+			defer wg.Done()
+
+			log.Info("Calling tool (parallel)",
+				zap.Int("index", idx),
+				zap.String("tool", tc.Name),
+				zap.String("args", truncate(tc.Arguments, 500)),
+			)
+			if reporter != nil {
+				reporter.OnToolCall(tc.Name, tc.Arguments)
+			}
+
+			result, err := a.executeTool(ctx, chatID, tc)
+			if err != nil {
+				result = fmt.Sprintf("Error: %v", err)
+			}
+			results[idx] = toolResult{Result: result, Err: err}
+		}(i, tc)
+	}
+
+	wg.Wait()
+	return results
+}
+
 func (a *ReactAgent) buildMessages(ctx context.Context, chatID string) ([]Message, error) {
 	history, err := a.memory.Load(ctx, chatID, a.cfg.MaxTurns*4) // rough limit
 	if err != nil {
 		return nil, fmt.Errorf("load history: %w", err)
 	}
+
+	// Sanitize tool messages to ensure proper pairing
+	history = SanitizeToolMessages(history)
 
 	// Context window check: compact when estimated tokens exceed 80% of maxInputLength
 	if a.cfg.MaxInputLength > 0 {
@@ -268,6 +345,8 @@ func (a *ReactAgent) buildMessages(ctx context.Context, chatID string) ([]Messag
 				if err != nil {
 					return nil, fmt.Errorf("load history after compact: %w", err)
 				}
+				// Re-sanitize after reload
+				history = SanitizeToolMessages(history)
 			}
 		}
 	}
@@ -293,20 +372,11 @@ func (a *ReactAgent) getSystemPrompt() string {
 }
 
 func estimateTokens(s string) int {
-	return len(s) / 4
+	return CountStringTokens(s)
 }
 
 func estimateMessagesTokens(msgs []Message) int {
-	n := 0
-	for _, m := range msgs {
-		n += len(m.Content) / 4
-		if len(m.ToolCalls) > 0 {
-			for _, tc := range m.ToolCalls {
-				n += len(tc.Arguments) / 4
-			}
-		}
-	}
-	return n
+	return CountMessageTokens(msgs)
 }
 
 func (a *ReactAgent) toolsToDefs() []ToolDef {

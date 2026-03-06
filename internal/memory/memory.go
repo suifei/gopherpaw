@@ -16,10 +16,10 @@ import (
 // InMemoryStore implements agent.MemoryStore using an in-memory map.
 // Safe for concurrent access.
 type InMemoryStore struct {
-	mu       sync.RWMutex
-	history  map[string][]storedMessage
-	cfg      config.MemoryConfig
-	maxHist  int
+	mu      sync.RWMutex
+	history map[string][]storedMessage
+	cfg     config.MemoryConfig
+	maxHist int
 }
 
 // storedMessage is used for both in-memory and file persistence.
@@ -196,3 +196,42 @@ func (s *InMemoryStore) LoadLongTerm(ctx context.Context, chatID string) (string
 	}
 	return "", nil
 }
+
+// SummaryMemory generates a simple text summary of messages (no LLM, just concatenation).
+// Implements agent.MemorySummarizer interface.
+func (s *InMemoryStore) SummaryMemory(ctx context.Context, messages []agent.Message) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if len(messages) == 0 {
+		return "", nil
+	}
+	var sb strings.Builder
+	for _, m := range messages {
+		if m.Role == "system" {
+			continue
+		}
+		role := m.Role
+		if role == "assistant" {
+			role = "AI"
+		} else if role == "user" {
+			role = "User"
+		}
+		sb.WriteString(role)
+		sb.WriteString(": ")
+		content := m.Content
+		if len(content) > 500 {
+			content = content[:497] + "..."
+		}
+		sb.WriteString(content)
+		sb.WriteString("\n")
+	}
+	text := sb.String()
+	if len(text) > 2000 {
+		return text[:1997] + "...", nil
+	}
+	return text, nil
+}
+
+// Ensure InMemoryStore implements MemorySummarizer.
+var _ agent.MemorySummarizer = (*InMemoryStore)(nil)

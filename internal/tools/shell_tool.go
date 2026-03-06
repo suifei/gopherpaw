@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 	"github.com/suifei/gopherpaw/internal/agent"
 )
 
-// ShellTool executes shell commands.
+// ShellTool executes shell commands with separate stdout/stderr capture.
 type ShellTool struct {
 	WorkingDir string
 }
@@ -24,7 +25,7 @@ func (t *ShellTool) Name() string { return "execute_shell_command" }
 
 // Description returns a human-readable description.
 func (t *ShellTool) Description() string {
-	return "Execute a shell command and return the return code, stdout and stderr. Use timeout to limit execution time (default 60 seconds)."
+	return "Execute a shell command and return the exit code, stdout and stderr separately. Use timeout to limit execution time (default 60 seconds)."
 }
 
 // Parameters returns the JSON Schema for tool parameters.
@@ -55,7 +56,16 @@ type shellArgs struct {
 	CWD     string `json:"cwd"`
 }
 
-// Execute runs the tool.
+// ShellResult represents the detailed result of a shell command execution.
+type ShellResult struct {
+	ExitCode int    `json:"exit_code"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	TimedOut bool   `json:"timed_out,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// Execute runs the tool and returns combined output for LLM compatibility.
 func (t *ShellTool) Execute(ctx context.Context, arguments string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -83,6 +93,44 @@ func (t *ShellTool) Execute(ctx context.Context, arguments string) (string, erro
 	}
 	absCwd, _ := filepath.Abs(cwd)
 
+	result := t.executeCommand(ctx, cmd, absCwd, timeout)
+	return formatShellResult(result), nil
+}
+
+// ExecuteRich runs the tool and returns structured ShellResult.
+// This implements agent.RichExecutor for enhanced output.
+func (t *ShellTool) ExecuteRich(ctx context.Context, arguments string) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var args shellArgs
+	if arguments != "" {
+		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+	}
+	cmd := strings.TrimSpace(args.Command)
+	if cmd == "" {
+		return &ShellResult{ExitCode: -1, Error: "No command provided"}, nil
+	}
+	timeout := args.Timeout
+	if timeout <= 0 {
+		timeout = 60
+	}
+	cwd := args.CWD
+	if cwd == "" && t.WorkingDir != "" {
+		cwd = t.WorkingDir
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	absCwd, _ := filepath.Abs(cwd)
+
+	return t.executeCommand(ctx, cmd, absCwd, timeout), nil
+}
+
+// executeCommand runs the command with separate stdout/stderr capture.
+func (t *ShellTool) executeCommand(ctx context.Context, cmd, cwd string, timeout int) *ShellResult {
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
@@ -92,22 +140,80 @@ func (t *ShellTool) Execute(ctx context.Context, arguments string) (string, erro
 	} else {
 		execCmd = exec.CommandContext(execCtx, "sh", "-c", cmd)
 	}
-	execCmd.Dir = absCwd
-	out, err := execCmd.CombinedOutput()
-	result := strings.TrimSpace(string(out))
-	if execCtx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("Error: Command timed out after %d seconds.", timeout), nil
+	execCmd.Dir = cwd
+
+	var stdout, stderr bytes.Buffer
+	execCmd.Stdout = &stdout
+	execCmd.Stderr = &stderr
+
+	err := execCmd.Run()
+
+	result := &ShellResult{
+		Stdout: strings.TrimSpace(stdout.String()),
+		Stderr: strings.TrimSpace(stderr.String()),
 	}
+
+	if execCtx.Err() == context.DeadlineExceeded {
+		result.TimedOut = true
+		result.ExitCode = -1
+		result.Error = fmt.Sprintf("Command timed out after %d seconds", timeout)
+		return result
+	}
+
 	if err != nil {
 		if execCmd.ProcessState != nil {
-			return fmt.Sprintf("Exit code: %v\n%s", execCmd.ProcessState.ExitCode(), result), nil
+			result.ExitCode = execCmd.ProcessState.ExitCode()
+		} else {
+			result.ExitCode = -1
+			result.Error = err.Error()
 		}
-		return fmt.Sprintf("Error: %v\n%s", err, result), nil
+	} else {
+		result.ExitCode = 0
 	}
-	if result == "" {
-		return "Command executed successfully (no output).", nil
+
+	return result
+}
+
+// formatShellResult formats the result for LLM consumption.
+func formatShellResult(r *ShellResult) string {
+	var sb strings.Builder
+
+	// Handle timeout
+	if r.TimedOut {
+		sb.WriteString(fmt.Sprintf("Error: %s\n", r.Error))
+		if r.Stdout != "" {
+			sb.WriteString(fmt.Sprintf("\n[stdout (partial)]:\n%s\n", r.Stdout))
+		}
+		if r.Stderr != "" {
+			sb.WriteString(fmt.Sprintf("\n[stderr (partial)]:\n%s\n", r.Stderr))
+		}
+		return sb.String()
 	}
-	return result, nil
+
+	// Handle execution error
+	if r.Error != "" && r.ExitCode == -1 {
+		sb.WriteString(fmt.Sprintf("Error: %s\n", r.Error))
+		return sb.String()
+	}
+
+	// Normal execution
+	sb.WriteString(fmt.Sprintf("Exit code: %d\n", r.ExitCode))
+
+	if r.Stdout != "" {
+		sb.WriteString(fmt.Sprintf("\n[stdout]:\n%s\n", r.Stdout))
+	}
+
+	if r.Stderr != "" {
+		sb.WriteString(fmt.Sprintf("\n[stderr]:\n%s\n", r.Stderr))
+	}
+
+	if r.Stdout == "" && r.Stderr == "" {
+		if r.ExitCode == 0 {
+			sb.WriteString("Command executed successfully (no output).\n")
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
 }
 
 // Ensure ShellTool implements agent.Tool.

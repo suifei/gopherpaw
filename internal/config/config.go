@@ -175,6 +175,7 @@ type DingTalkConfig struct {
 	BotPrefix    string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
 	ClientID     string `mapstructure:"client_id" yaml:"client_id"`
 	ClientSecret string `mapstructure:"client_secret" yaml:"client_secret"`
+	UseStream    bool   `mapstructure:"use_stream" yaml:"use_stream"` // Use Stream mode (WebSocket long connection)
 }
 
 // FeishuConfig holds Feishu channel settings.
@@ -185,6 +186,7 @@ type FeishuConfig struct {
 	AppSecret         string `mapstructure:"app_secret" yaml:"app_secret"`
 	EncryptKey        string `mapstructure:"encrypt_key" yaml:"encrypt_key"`
 	VerificationToken string `mapstructure:"verification_token" yaml:"verification_token"`
+	UseWebSocket      bool   `mapstructure:"use_websocket" yaml:"use_websocket"` // Use WebSocket long connection
 }
 
 // QQConfig holds QQ channel settings.
@@ -224,7 +226,7 @@ type MCPConfig struct {
 type MCPServerConfig struct {
 	Name        string            `mapstructure:"name" yaml:"name"`
 	Description string            `mapstructure:"description" yaml:"description"`
-	Enabled     *bool             `mapstructure:"enabled" yaml:"enabled"` // nil = true (default), false = disabled
+	Enabled     *bool             `mapstructure:"enabled" yaml:"enabled"`     // nil = true (default), false = disabled
 	Transport   string            `mapstructure:"transport" yaml:"transport"` // "stdio", "streamable_http", "sse" (default: "stdio")
 	URL         string            `mapstructure:"url" yaml:"url"`             // HTTP/SSE endpoint URL
 	Headers     map[string]string `mapstructure:"headers" yaml:"headers"`     // HTTP headers for remote transports

@@ -174,6 +174,16 @@ type browserArgs struct {
 	Height   int    `json:"height,omitempty"`
 	Headed   bool   `json:"headed,omitempty"`
 	Wait     int    `json:"wait,omitempty"`
+	// New fields for additional actions
+	Key        string   `json:"key,omitempty"`         // press_key action
+	Accept     bool     `json:"accept,omitempty"`      // handle_dialog action
+	PromptText string   `json:"prompt_text,omitempty"` // handle_dialog action
+	FilePaths  []string `json:"file_paths,omitempty"`  // file_upload action
+	Values     []string `json:"values,omitempty"`      // select_option action
+	StartX     int      `json:"start_x,omitempty"`     // drag action
+	StartY     int      `json:"start_y,omitempty"`     // drag action
+	EndX       int      `json:"end_x,omitempty"`       // drag action
+	EndY       int      `json:"end_y,omitempty"`       // drag action
 }
 
 // BrowserTool provides browser automation via Chrome DevTools Protocol (chromedp).
@@ -182,25 +192,34 @@ type BrowserTool struct{}
 func (t *BrowserTool) Name() string { return "browser_use" }
 
 func (t *BrowserTool) Description() string {
-	return "Browser automation tool. Use action parameter to control: start, stop, open, navigate, navigate_back, screenshot, click, type, hover, eval, snapshot, pdf, tabs, wait_for, resize."
+	return "Browser automation tool. Use action parameter to control: start, stop, close, open, navigate, navigate_back, screenshot, click, type, hover, eval, snapshot, pdf, tabs, wait_for, resize, press_key, handle_dialog, file_upload, select_option, drag, scroll."
 }
 
 func (t *BrowserTool) Parameters() any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"action":    map[string]any{"type": "string", "description": "Action to perform: start, stop, open, navigate, navigate_back, screenshot, click, type, hover, eval, snapshot, pdf, tabs, wait_for, resize"},
-			"url":       map[string]any{"type": "string", "description": "URL for open/navigate actions"},
-			"page_id":   map[string]any{"type": "string", "description": "Page identifier (default: 'default')"},
-			"selector":  map[string]any{"type": "string", "description": "CSS selector for click/type/hover/wait_for"},
-			"text":      map[string]any{"type": "string", "description": "Text to type"},
-			"code":      map[string]any{"type": "string", "description": "JavaScript code for eval action"},
-			"path":      map[string]any{"type": "string", "description": "File path for screenshot/pdf output"},
-			"full_page": map[string]any{"type": "boolean", "description": "Capture full page screenshot"},
-			"width":     map[string]any{"type": "integer", "description": "Viewport width for resize"},
-			"height":    map[string]any{"type": "integer", "description": "Viewport height for resize"},
-			"headed":    map[string]any{"type": "boolean", "description": "Run browser in headed (visible) mode"},
-			"wait":      map[string]any{"type": "integer", "description": "Wait time in milliseconds"},
+			"action":      map[string]any{"type": "string", "description": "Action to perform: start, stop, close, open, navigate, navigate_back, screenshot, click, type, hover, eval, snapshot, pdf, tabs, wait_for, resize, press_key, handle_dialog, file_upload, select_option, drag, scroll"},
+			"url":         map[string]any{"type": "string", "description": "URL for open/navigate actions"},
+			"page_id":     map[string]any{"type": "string", "description": "Page identifier (default: 'default')"},
+			"selector":    map[string]any{"type": "string", "description": "CSS selector for click/type/hover/wait_for/file_upload/select_option"},
+			"text":        map[string]any{"type": "string", "description": "Text to type"},
+			"code":        map[string]any{"type": "string", "description": "JavaScript code for eval action"},
+			"path":        map[string]any{"type": "string", "description": "File path for screenshot/pdf output"},
+			"full_page":   map[string]any{"type": "boolean", "description": "Capture full page screenshot"},
+			"width":       map[string]any{"type": "integer", "description": "Viewport width for resize"},
+			"height":      map[string]any{"type": "integer", "description": "Viewport height for resize"},
+			"headed":      map[string]any{"type": "boolean", "description": "Run browser in headed (visible) mode"},
+			"wait":        map[string]any{"type": "integer", "description": "Wait time in milliseconds"},
+			"key":         map[string]any{"type": "string", "description": "Key to press for press_key action (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown')"},
+			"accept":      map[string]any{"type": "boolean", "description": "Whether to accept the dialog for handle_dialog action"},
+			"prompt_text": map[string]any{"type": "string", "description": "Text to enter in prompt dialog for handle_dialog action"},
+			"file_paths":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "File paths to upload for file_upload action"},
+			"values":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Values to select for select_option action"},
+			"start_x":     map[string]any{"type": "integer", "description": "Start X coordinate for drag action"},
+			"start_y":     map[string]any{"type": "integer", "description": "Start Y coordinate for drag action"},
+			"end_x":       map[string]any{"type": "integer", "description": "End X coordinate for drag action"},
+			"end_y":       map[string]any{"type": "integer", "description": "End Y coordinate for drag action"},
 		},
 		"required": []string{"action"},
 	}
@@ -228,6 +247,8 @@ func (t *BrowserTool) ExecuteRich(ctx context.Context, arguments string) (*agent
 		return t.doStart(args)
 	case "stop":
 		return t.doStop()
+	case "close":
+		return t.doClose(args)
 	case "open", "navigate":
 		return t.doOpen(args)
 	case "navigate_back":
@@ -252,6 +273,18 @@ func (t *BrowserTool) ExecuteRich(ctx context.Context, arguments string) (*agent
 		return t.doWaitFor(args)
 	case "resize":
 		return t.doResize(args)
+	case "press_key":
+		return t.doPressKey(args)
+	case "handle_dialog":
+		return t.doHandleDialog(args)
+	case "file_upload":
+		return t.doFileUpload(args)
+	case "select_option":
+		return t.doSelectOption(args)
+	case "drag":
+		return t.doDrag(args)
+	case "scroll":
+		return t.doScroll(args)
 	default:
 		return nil, fmt.Errorf("unknown browser action: %s", args.Action)
 	}
@@ -558,3 +591,220 @@ var (
 	_ agent.Tool         = (*BrowserTool)(nil)
 	_ agent.RichExecutor = (*BrowserTool)(nil)
 )
+
+// doClose closes a specific page/tab.
+func (t *BrowserTool) doClose(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+	globalBrowser.removePage(args.PageID)
+	return &agent.ToolResult{Text: fmt.Sprintf("Page %s closed", args.PageID)}, nil
+}
+
+// doPressKey sends a key press event to the page.
+func (t *BrowserTool) doPressKey(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+	if args.Key == "" {
+		return nil, fmt.Errorf("key is required for press_key action")
+	}
+
+	// Map common key names to chromedp key constants
+	key := args.Key
+	if err := chromedp.Run(pc.ctx, chromedp.KeyEvent(key)); err != nil {
+		return nil, fmt.Errorf("press key %q: %w", key, err)
+	}
+	return &agent.ToolResult{Text: fmt.Sprintf("Pressed key: %s", key)}, nil
+}
+
+// doHandleDialog handles JavaScript dialogs (alert, confirm, prompt).
+func (t *BrowserTool) doHandleDialog(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+
+	// Set up dialog handler
+	chromedp.ListenTarget(pc.ctx, func(ev interface{}) {
+		if e, ok := ev.(*cdppage.EventJavascriptDialogOpening); ok {
+			logger.L().Debug("dialog opened", zap.String("type", e.Type.String()), zap.String("message", e.Message))
+			go func() {
+				err := chromedp.Run(pc.ctx,
+					cdppage.HandleJavaScriptDialog(args.Accept).WithPromptText(args.PromptText),
+				)
+				if err != nil {
+					logger.L().Warn("handle dialog failed", zap.Error(err))
+				}
+			}()
+		}
+	})
+
+	action := "dismissed"
+	if args.Accept {
+		action = "accepted"
+	}
+	return &agent.ToolResult{Text: fmt.Sprintf("Dialog handler set to %s dialogs", action)}, nil
+}
+
+// doFileUpload uploads files to a file input element.
+func (t *BrowserTool) doFileUpload(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+	if args.Selector == "" {
+		return nil, fmt.Errorf("selector is required for file_upload action")
+	}
+	if len(args.FilePaths) == 0 {
+		return nil, fmt.Errorf("file_paths is required for file_upload action")
+	}
+
+	// Verify files exist
+	for _, fp := range args.FilePaths {
+		if _, err := os.Stat(fp); err != nil {
+			return nil, fmt.Errorf("file not found: %s", fp)
+		}
+	}
+
+	if err := chromedp.Run(pc.ctx, chromedp.SetUploadFiles(args.Selector, args.FilePaths, chromedp.ByQuery)); err != nil {
+		return nil, fmt.Errorf("file upload to %q: %w", args.Selector, err)
+	}
+	return &agent.ToolResult{Text: fmt.Sprintf("Uploaded %d file(s) to %s", len(args.FilePaths), args.Selector)}, nil
+}
+
+// doSelectOption selects option(s) in a <select> element.
+func (t *BrowserTool) doSelectOption(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+	if args.Selector == "" {
+		return nil, fmt.Errorf("selector is required for select_option action")
+	}
+	if len(args.Values) == 0 {
+		return nil, fmt.Errorf("values is required for select_option action")
+	}
+
+	// Use JavaScript to select options by value
+	js := fmt.Sprintf(`
+		(function() {
+			var sel = document.querySelector(%q);
+			if (!sel) return 'selector not found';
+			var values = %s;
+			for (var i = 0; i < sel.options.length; i++) {
+				sel.options[i].selected = values.includes(sel.options[i].value);
+			}
+			sel.dispatchEvent(new Event('change', { bubbles: true }));
+			return 'ok';
+		})()
+	`, args.Selector, mustJSON(args.Values))
+
+	var result string
+	if err := chromedp.Run(pc.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return nil, fmt.Errorf("select option: %w", err)
+	}
+	if result != "ok" {
+		return nil, fmt.Errorf("select option: %s", result)
+	}
+	return &agent.ToolResult{Text: fmt.Sprintf("Selected %d option(s) in %s", len(args.Values), args.Selector)}, nil
+}
+
+// doDrag performs a drag-and-drop operation.
+func (t *BrowserTool) doDrag(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+
+	// Use mouse events to simulate drag
+	if err := chromedp.Run(pc.ctx,
+		chromedp.MouseClickXY(float64(args.StartX), float64(args.StartY), chromedp.ButtonLeft),
+	); err != nil {
+		return nil, fmt.Errorf("drag start: %w", err)
+	}
+
+	// Simulate drag by using JavaScript for more reliable results
+	js := fmt.Sprintf(`
+		(function() {
+			var startEl = document.elementFromPoint(%d, %d);
+			var endEl = document.elementFromPoint(%d, %d);
+			if (!startEl) return 'start element not found';
+			
+			var dataTransfer = new DataTransfer();
+			var dragStart = new DragEvent('dragstart', { bubbles: true, dataTransfer: dataTransfer });
+			var dragOver = new DragEvent('dragover', { bubbles: true, dataTransfer: dataTransfer });
+			var drop = new DragEvent('drop', { bubbles: true, dataTransfer: dataTransfer });
+			var dragEnd = new DragEvent('dragend', { bubbles: true, dataTransfer: dataTransfer });
+			
+			startEl.dispatchEvent(dragStart);
+			if (endEl) {
+				endEl.dispatchEvent(dragOver);
+				endEl.dispatchEvent(drop);
+			}
+			startEl.dispatchEvent(dragEnd);
+			return 'ok';
+		})()
+	`, args.StartX, args.StartY, args.EndX, args.EndY)
+
+	var result string
+	if err := chromedp.Run(pc.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return nil, fmt.Errorf("drag: %w", err)
+	}
+	return &agent.ToolResult{Text: fmt.Sprintf("Dragged from (%d,%d) to (%d,%d)", args.StartX, args.StartY, args.EndX, args.EndY)}, nil
+}
+
+// doScroll scrolls the page or an element.
+func (t *BrowserTool) doScroll(args browserArgs) (*agent.ToolResult, error) {
+	pc := globalBrowser.getPage(args.PageID)
+	if pc == nil {
+		return nil, fmt.Errorf("page %q not found", args.PageID)
+	}
+
+	// Default scroll amounts
+	scrollX, scrollY := args.Width, args.Height
+	if scrollX == 0 && scrollY == 0 {
+		scrollY = 300 // Default vertical scroll
+	}
+
+	var js string
+	if args.Selector != "" {
+		// Scroll within element
+		js = fmt.Sprintf(`
+			(function() {
+				var el = document.querySelector(%q);
+				if (!el) return 'element not found';
+				el.scrollBy(%d, %d);
+				return 'ok';
+			})()
+		`, args.Selector, scrollX, scrollY)
+	} else {
+		// Scroll the page
+		js = fmt.Sprintf(`window.scrollBy(%d, %d); 'ok'`, scrollX, scrollY)
+	}
+
+	var result string
+	if err := chromedp.Run(pc.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return nil, fmt.Errorf("scroll: %w", err)
+	}
+	if result != "ok" {
+		return nil, fmt.Errorf("scroll: %s", result)
+	}
+
+	target := "page"
+	if args.Selector != "" {
+		target = args.Selector
+	}
+	return &agent.ToolResult{Text: fmt.Sprintf("Scrolled %s by (%d, %d)", target, scrollX, scrollY)}, nil
+}
+
+// mustJSON encodes a value to JSON, panicking on error (for internal use only).
+func mustJSON(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}

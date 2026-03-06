@@ -228,3 +228,110 @@ func chunkText(s string, maxLen int) []string {
 	}
 	return out
 }
+
+// SendMarkdown sends a Markdown-formatted message to the given chat.
+func (c *TelegramChannel) SendMarkdown(ctx context.Context, to string, markdown string, meta map[string]string) error {
+	if !c.IsEnabled() || c.bot == nil {
+		return nil
+	}
+	chatIDStr := to
+	if meta != nil {
+		if id := meta["chat_id"]; id != "" {
+			chatIDStr = id
+		}
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat_id: %w", err)
+	}
+	recipient := &telebot.Chat{ID: chatID}
+	chunks := chunkText(markdown, telegramChunkSize)
+	for _, chunk := range chunks {
+		if _, err := c.bot.Send(recipient, chunk, telebot.ModeMarkdownV2); err != nil {
+			return fmt.Errorf("telegram send markdown: %w", err)
+		}
+	}
+	return nil
+}
+
+// EditMessage edits a previously sent message.
+func (c *TelegramChannel) EditMessage(ctx context.Context, to string, messageID string, newText string, meta map[string]string) error {
+	if !c.IsEnabled() || c.bot == nil {
+		return nil
+	}
+	chatIDStr := to
+	if meta != nil {
+		if id := meta["chat_id"]; id != "" {
+			chatIDStr = id
+		}
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat_id: %w", err)
+	}
+	msgID, err := strconv.Atoi(messageID)
+	if err != nil {
+		return fmt.Errorf("invalid message_id: %w", err)
+	}
+	msg := &telebot.Message{
+		ID:   msgID,
+		Chat: &telebot.Chat{ID: chatID},
+	}
+	_, err = c.bot.Edit(msg, newText)
+	return err
+}
+
+// DeleteMessage deletes a message from the chat.
+func (c *TelegramChannel) DeleteMessage(ctx context.Context, to string, messageID string, meta map[string]string) error {
+	if !c.IsEnabled() || c.bot == nil {
+		return nil
+	}
+	chatIDStr := to
+	if meta != nil {
+		if id := meta["chat_id"]; id != "" {
+			chatIDStr = id
+		}
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat_id: %w", err)
+	}
+	msgID, err := strconv.Atoi(messageID)
+	if err != nil {
+		return fmt.Errorf("invalid message_id: %w", err)
+	}
+	msg := &telebot.Message{
+		ID:   msgID,
+		Chat: &telebot.Chat{ID: chatID},
+	}
+	return c.bot.Delete(msg)
+}
+
+// SendTyping sends a typing indicator to the chat.
+func (c *TelegramChannel) SendTyping(ctx context.Context, to string, meta map[string]string) error {
+	if !c.IsEnabled() || c.bot == nil {
+		return nil
+	}
+	chatIDStr := to
+	if meta != nil {
+		if id := meta["chat_id"]; id != "" {
+			chatIDStr = id
+		}
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid chat_id: %w", err)
+	}
+	recipient := &telebot.Chat{ID: chatID}
+	return c.bot.Notify(recipient, telebot.Typing)
+}
+
+// Ensure TelegramChannel implements optional interfaces.
+var (
+	_ Channel         = (*TelegramChannel)(nil)
+	_ FileSender      = (*TelegramChannel)(nil)
+	_ MarkdownSender  = (*TelegramChannel)(nil)
+	_ MessageEditor   = (*TelegramChannel)(nil)
+	_ MessageDeleter  = (*TelegramChannel)(nil)
+	_ TypingIndicator = (*TelegramChannel)(nil)
+)

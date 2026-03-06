@@ -217,3 +217,90 @@ func (c *DiscordChannel) Send(ctx context.Context, to string, text string, meta 
 	}
 	return fmt.Errorf("discord send: need channel_id or user_id in meta")
 }
+
+// resolveDiscordChannel resolves a channel ID from 'to' and 'meta'.
+func (c *DiscordChannel) resolveDiscordChannel(to string, meta map[string]string) (string, error) {
+	channelID := ""
+	userID := ""
+	if meta != nil {
+		channelID = meta["channel_id"]
+		userID = meta["user_id"]
+	}
+	if channelID == "" && to != "" {
+		if strings.HasPrefix(to, "dm:") {
+			userID = strings.TrimPrefix(to, "dm:")
+		} else {
+			channelID = to
+		}
+	}
+	if channelID != "" {
+		return channelID, nil
+	}
+	if userID != "" {
+		ch, err := c.session.UserChannelCreate(userID)
+		if err != nil {
+			return "", fmt.Errorf("discord create dm: %w", err)
+		}
+		return ch.ID, nil
+	}
+	return "", fmt.Errorf("need channel_id or user_id in meta")
+}
+
+// EditMessage edits a previously sent message.
+func (c *DiscordChannel) EditMessage(ctx context.Context, to string, messageID string, newText string, meta map[string]string) error {
+	if !c.IsEnabled() || c.session == nil {
+		return nil
+	}
+	channelID, err := c.resolveDiscordChannel(to, meta)
+	if err != nil {
+		return err
+	}
+	_, err = c.session.ChannelMessageEdit(channelID, messageID, newText)
+	return err
+}
+
+// DeleteMessage deletes a message from the channel.
+func (c *DiscordChannel) DeleteMessage(ctx context.Context, to string, messageID string, meta map[string]string) error {
+	if !c.IsEnabled() || c.session == nil {
+		return nil
+	}
+	channelID, err := c.resolveDiscordChannel(to, meta)
+	if err != nil {
+		return err
+	}
+	return c.session.ChannelMessageDelete(channelID, messageID)
+}
+
+// React adds a reaction emoji to a message.
+func (c *DiscordChannel) React(ctx context.Context, to string, messageID string, emoji string, meta map[string]string) error {
+	if !c.IsEnabled() || c.session == nil {
+		return nil
+	}
+	channelID, err := c.resolveDiscordChannel(to, meta)
+	if err != nil {
+		return err
+	}
+	return c.session.MessageReactionAdd(channelID, messageID, emoji)
+}
+
+// SendTyping sends a typing indicator to the channel.
+func (c *DiscordChannel) SendTyping(ctx context.Context, to string, meta map[string]string) error {
+	if !c.IsEnabled() || c.session == nil {
+		return nil
+	}
+	channelID, err := c.resolveDiscordChannel(to, meta)
+	if err != nil {
+		return err
+	}
+	return c.session.ChannelTyping(channelID)
+}
+
+// Ensure DiscordChannel implements optional interfaces.
+var (
+	_ Channel         = (*DiscordChannel)(nil)
+	_ FileSender      = (*DiscordChannel)(nil)
+	_ MessageEditor   = (*DiscordChannel)(nil)
+	_ MessageDeleter  = (*DiscordChannel)(nil)
+	_ Reactor         = (*DiscordChannel)(nil)
+	_ TypingIndicator = (*DiscordChannel)(nil)
+)

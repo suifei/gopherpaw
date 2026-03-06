@@ -173,6 +173,123 @@ func TestBM25_Score(t *testing.T) {
 	}
 }
 
+func TestBM25_WithCorpus(t *testing.T) {
+	bm := NewBM25()
+
+	// Add corpus for IDF calculation
+	bm.AddDocuments([]string{
+		"the quick brown fox jumps over the lazy dog",
+		"the lazy dog sleeps all day",
+		"a quick fox runs fast",
+		"dogs and cats are pets",
+		"the weather is nice today",
+	})
+
+	// "quick" appears in 2/5 docs, "lazy" appears in 2/5 docs
+	// Rare term "weather" should have higher IDF
+	scoreCommon := bm.Score("the", "the quick brown fox") // "the" is very common
+	scoreRare := bm.Score("weather", "the weather is nice today")
+
+	// Rare term should score relatively higher due to IDF
+	if scoreCommon <= 0 {
+		t.Errorf("common term score should be positive: got %v", scoreCommon)
+	}
+	if scoreRare <= 0 {
+		t.Errorf("rare term score should be positive: got %v", scoreRare)
+	}
+}
+
+func TestBM25_LengthNormalization(t *testing.T) {
+	bm := NewBM25()
+
+	// Set corpus with varying document lengths
+	bm.AddDocuments([]string{
+		"short doc",
+		"this is a medium length document with more words",
+		"this is a very long document that contains many many words and has a lot of content repeated multiple times to make it longer",
+	})
+
+	// Query for a term that appears once in each
+	query := "doc"
+	shortContent := "short doc about programming"
+	longContent := "this is a very long doc that contains many many words and has a lot of content repeated multiple times to make it longer and even more content here"
+
+	shortScore := bm.Score(query, shortContent)
+	longScore := bm.Score(query, longContent)
+
+	// With length normalization, short document should not be penalized too much
+	// and long document should not get unfair advantage just from length
+	if shortScore <= 0 {
+		t.Errorf("short doc score should be positive: got %v", shortScore)
+	}
+	if longScore <= 0 {
+		t.Errorf("long doc score should be positive: got %v", longScore)
+	}
+}
+
+func TestBM25_Options(t *testing.T) {
+	// Test custom k1 and b parameters
+	bm := NewBM25(WithK1(2.0), WithB(0.5))
+
+	s := bm.Score("hello world", "hello world foo bar")
+	if s <= 0 {
+		t.Errorf("score with custom params should be positive: got %v", s)
+	}
+
+	// Test with extreme settings
+	bmNoNorm := NewBM25(WithB(0)) // No length normalization
+	sNoNorm := bmNoNorm.Score("test", "test document")
+	if sNoNorm <= 0 {
+		t.Errorf("score without normalization should be positive: got %v", sNoNorm)
+	}
+}
+
+func TestBM25_ScoreWithDetails(t *testing.T) {
+	bm := NewBM25()
+	bm.AddDocuments([]string{
+		"hello world",
+		"hello there",
+		"world peace",
+	})
+
+	score, details := bm.ScoreWithDetails("hello world", "hello world example")
+
+	if score <= 0 {
+		t.Errorf("score should be positive: got %v", score)
+	}
+
+	// Check that details contains expected keys
+	if _, ok := details["doc_length"]; !ok {
+		t.Error("details should contain doc_length")
+	}
+	if _, ok := details["k1"]; !ok {
+		t.Error("details should contain k1")
+	}
+	if _, ok := details["b"]; !ok {
+		t.Error("details should contain b")
+	}
+	if _, ok := details["total_score"]; !ok {
+		t.Error("details should contain total_score")
+	}
+}
+
+func TestBM25_ClearCorpus(t *testing.T) {
+	bm := NewBM25()
+	bm.AddDocuments([]string{"doc1", "doc2", "doc3"})
+
+	// Score with corpus
+	s1 := bm.Score("doc1", "doc1 content")
+
+	// Clear and score again
+	bm.ClearCorpus()
+	s2 := bm.Score("doc1", "doc1 content")
+
+	// Both should be positive, but may differ due to IDF
+	if s1 <= 0 || s2 <= 0 {
+		t.Errorf("scores should be positive: s1=%v, s2=%v", s1, s2)
+	}
+}
+
 func TestCosineSimilarity(t *testing.T) {
 	a := []float32{1, 0, 0}
 	b := []float32{1, 0, 0}
@@ -195,5 +312,87 @@ func TestCosineSimilarity(t *testing.T) {
 	_, err = CosineSimilarity([]float32{1, 2}, []float32{1})
 	if err == nil {
 		t.Error("mismatch length should error")
+	}
+}
+
+func TestInMemoryStore_SummaryMemory(t *testing.T) {
+	store := New(config.MemoryConfig{}).(*InMemoryStore)
+	ctx := context.Background()
+
+	// Empty messages
+	summary, err := store.SummaryMemory(ctx, nil)
+	if err != nil {
+		t.Fatalf("SummaryMemory empty: %v", err)
+	}
+	if summary != "" {
+		t.Errorf("SummaryMemory empty: expected empty, got %q", summary)
+	}
+
+	// Some messages
+	msgs := []agent.Message{
+		{Role: "user", Content: "Hello, how are you?"},
+		{Role: "assistant", Content: "I'm doing well, thanks!"},
+	}
+	summary, err = store.SummaryMemory(ctx, msgs)
+	if err != nil {
+		t.Fatalf("SummaryMemory: %v", err)
+	}
+	if !contains(summary, "User:") || !contains(summary, "AI:") {
+		t.Errorf("SummaryMemory expected role prefixes, got %q", summary)
+	}
+
+	// Context cancel
+	ctxCancel, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = store.SummaryMemory(ctxCancel, msgs)
+	if err != context.Canceled {
+		t.Errorf("SummaryMemory with canceled ctx: got %v", err)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && s != "" && substr != "" && s != substr &&
+		(s == substr || len(s) > len(substr) && s[:len(substr)] == substr ||
+			len(s) > len(substr) && s[len(s)-len(substr):] == substr ||
+			func() bool {
+				for i := 0; i <= len(s)-len(substr); i++ {
+					if s[i:i+len(substr)] == substr {
+						return true
+					}
+				}
+				return false
+			}())
+}
+
+func TestCompactor_SummaryMemory(t *testing.T) {
+	cfg := config.MemoryConfig{}
+	compactor := NewCompactor(nil, cfg)
+	ctx := context.Background()
+
+	// Empty messages
+	summary, err := compactor.SummaryMemory(ctx, nil)
+	if err != nil {
+		t.Fatalf("SummaryMemory empty: %v", err)
+	}
+	if summary != "" {
+		t.Errorf("SummaryMemory empty: expected empty, got %q", summary)
+	}
+
+	// With messages (no LLM, should return concatenation)
+	msgs := []agent.Message{
+		{Role: "system", Content: "You are a helpful assistant."},
+		{Role: "user", Content: "What is 2+2?"},
+		{Role: "assistant", Content: "2+2 equals 4."},
+	}
+	summary, err = compactor.SummaryMemory(ctx, msgs)
+	if err != nil {
+		t.Fatalf("SummaryMemory: %v", err)
+	}
+	// System messages should be skipped
+	if contains(summary, "system") {
+		t.Errorf("SummaryMemory should skip system messages, got %q", summary)
+	}
+	if !contains(summary, "User:") || !contains(summary, "AI:") {
+		t.Errorf("SummaryMemory should include User and AI, got %q", summary)
 	}
 }

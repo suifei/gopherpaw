@@ -73,27 +73,32 @@ func MemoryCompactionHook(threshold int, keepRecent int) Hook {
 }
 
 // BootstrapHook checks for BOOTSTRAP.md on the first user interaction
-// and prepends bootstrap guidance to the user message.
+// and runs the bootstrap flow via BootstrapRunner.
+// This is the unified bootstrap path - it delegates to BootstrapRunner internally.
 func BootstrapHook(workingDir string, language string) Hook {
 	if language == "" {
 		language = "zh"
 	}
-	completedPath := filepath.Join(workingDir, ".bootstrap_completed")
 
 	return func(ctx context.Context, agent *ReactAgent, chatID string, messages []Message) ([]Message, error) {
+		// Only run on first user interaction
+		if !isFirstUserInteraction(messages) {
+			return messages, nil
+		}
+
+		// Check if bootstrap already completed
+		completedPath := filepath.Join(workingDir, ".bootstrap_completed")
 		if _, err := os.Stat(completedPath); err == nil {
 			return messages, nil
 		}
 
+		// Check if BOOTSTRAP.md exists
 		bootstrapPath := filepath.Join(workingDir, fileBOOTSTRAP)
 		if _, err := os.Stat(bootstrapPath); os.IsNotExist(err) {
 			return messages, nil
 		}
 
-		if !isFirstUserInteraction(messages) {
-			return messages, nil
-		}
-
+		// Inject bootstrap guidance into the first user message
 		guidance := BuildBootstrapGuidance(language)
 		if guidance == "" {
 			return messages, nil
@@ -106,6 +111,7 @@ func BootstrapHook(workingDir string, language string) Hook {
 			}
 		}
 
+		// Mark as completed after injection
 		if err := os.WriteFile(completedPath, []byte("done"), 0644); err != nil {
 			logger.L().Warn("write .bootstrap_completed", zap.Error(err))
 		}

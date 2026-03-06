@@ -45,13 +45,13 @@ func truncateForConsole(s string, maxLen int) string {
 // ConsoleChannel reads from stdin and writes to stdout.
 // Used for development and testing.
 type ConsoleChannel struct {
-	agent    agent.Agent
-	enabled  bool
-	stopCh   chan struct{}
-	doneCh   chan struct{}
-	mu       sync.Mutex
-	running  bool
-	onMsg    func(ctx context.Context, chName string, msg IncomingMessage) error
+	agent   agent.Agent
+	enabled bool
+	stopCh  chan struct{}
+	doneCh  chan struct{}
+	mu      sync.Mutex
+	running bool
+	onMsg   func(ctx context.Context, chName string, msg IncomingMessage) error
 }
 
 // NewConsole creates a console channel.
@@ -172,3 +172,9 @@ func (c *ConsoleChannel) Stop(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Ensure ConsoleChannel implements interfaces.
+var (
+	_ Channel    = (*ConsoleChannel)(nil)
+	_ FileSender = (*ConsoleChannel)(nil)
+)

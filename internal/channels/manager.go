@@ -59,10 +59,20 @@ func (m *Manager) buildChannels(cfg config.ChannelsConfig) []Channel {
 		out = append(out, NewDiscord(m.agent, cfg.Discord, onMsg))
 	}
 	if cfg.DingTalk.Enabled && cfg.DingTalk.ClientID != "" && cfg.DingTalk.ClientSecret != "" {
-		out = append(out, NewDingTalk(m.agent, cfg.DingTalk, onMsg))
+		// Use Stream mode if configured, otherwise use webhook mode
+		if cfg.DingTalk.UseStream {
+			out = append(out, NewDingTalkStream(m.agent, cfg.DingTalk, onMsg))
+		} else {
+			out = append(out, NewDingTalk(m.agent, cfg.DingTalk, onMsg))
+		}
 	}
 	if cfg.Feishu.Enabled && cfg.Feishu.AppID != "" && cfg.Feishu.AppSecret != "" {
-		out = append(out, NewFeishu(m.agent, cfg.Feishu, onMsg))
+		// Use WebSocket mode if configured, otherwise use webhook mode
+		if cfg.Feishu.UseWebSocket {
+			out = append(out, NewFeishuWS(m.agent, cfg.Feishu, onMsg))
+		} else {
+			out = append(out, NewFeishu(m.agent, cfg.Feishu, onMsg))
+		}
 	}
 	if cfg.QQ.Enabled && cfg.QQ.AppID != "" && cfg.QQ.ClientSecret != "" {
 		out = append(out, NewQQ(m.agent, cfg.QQ, onMsg))

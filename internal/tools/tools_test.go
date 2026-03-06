@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,8 +31,12 @@ func TestShellTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if out != "hello" && out != "Command executed successfully (no output)." {
-		t.Errorf("Execute: got %q", out)
+	// Updated format: now includes Exit code and [stdout] section
+	if !strings.Contains(out, "hello") {
+		t.Errorf("Execute: expected 'hello' in output, got %q", out)
+	}
+	if !strings.Contains(out, "Exit code: 0") {
+		t.Errorf("Execute: expected 'Exit code: 0' in output, got %q", out)
 	}
 }
 
@@ -141,6 +146,117 @@ func TestGrepSearchTool(t *testing.T) {
 	}
 	if out == "" || out == "No matches found" {
 		t.Errorf("Execute: got %q", out)
+	}
+}
+
+func TestGrepSearchTool_ContextLines(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	// Create a test file with numbered lines
+	content := "line1\nline2\nline3\nMATCH\nline5\nline6\nline7"
+	os.WriteFile(filepath.Join(dir, "ctx.txt"), []byte(content), 0644)
+
+	tests := []struct {
+		name         string
+		contextLines int
+		wantLines    []string
+		notWantLines []string
+	}{
+		{
+			name:         "no context",
+			contextLines: 0,
+			wantLines:    []string{"ctx.txt:4: MATCH"},
+			notWantLines: []string{"line3", "line5"},
+		},
+		{
+			name:         "context 1 line",
+			contextLines: 1,
+			wantLines:    []string{"line3", "MATCH", "line5"},
+			notWantLines: []string{"line2", "line6"},
+		},
+		{
+			name:         "context 2 lines",
+			contextLines: 2,
+			wantLines:    []string{"line2", "line3", "MATCH", "line5", "line6"},
+			notWantLines: []string{"line1", "line7"},
+		},
+		{
+			name:         "context 3 lines includes all",
+			contextLines: 3,
+			wantLines:    []string{"line1", "line2", "line3", "MATCH", "line5", "line6", "line7"},
+		},
+	}
+
+	tool := &GrepSearchTool{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := fmt.Sprintf(`{"pattern":"MATCH","path":".","context_lines":%d}`, tt.contextLines)
+			out, err := tool.Execute(context.Background(), args)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			for _, want := range tt.wantLines {
+				if !strings.Contains(out, want) {
+					t.Errorf("Expected output to contain %q, got:\n%s", want, out)
+				}
+			}
+			for _, notWant := range tt.notWantLines {
+				if strings.Contains(out, notWant) {
+					t.Errorf("Expected output NOT to contain %q, got:\n%s", notWant, out)
+				}
+			}
+		})
+	}
+}
+
+func TestGrepSearchTool_ContextLinesMergeRanges(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	// Create a test file with two nearby matches - ranges should merge
+	content := "line1\nMATCH1\nline3\nMATCH2\nline5\nline6"
+	os.WriteFile(filepath.Join(dir, "merge.txt"), []byte(content), 0644)
+
+	tool := &GrepSearchTool{}
+	// context_lines=1 means MATCH1 shows line1-line3, MATCH2 shows line3-line5
+	// These overlap at line3, so they should merge into one block
+	out, err := tool.Execute(context.Background(), `{"pattern":"MATCH","path":".","context_lines":1,"is_regex":false}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Should have merged into one block, check block count
+	blockCount := strings.Count(out, "--- merge.txt ---")
+	if blockCount != 1 {
+		t.Errorf("Expected 1 merged block, got %d blocks:\n%s", blockCount, out)
+	}
+	// Both matches should be marked with ">"
+	if strings.Count(out, "> ") < 2 {
+		t.Errorf("Expected at least 2 match markers, got:\n%s", out)
+	}
+}
+
+func TestGrepSearchTool_ContextLinesClamp(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	os.WriteFile(filepath.Join(dir, "clamp.txt"), []byte("a\nb\nc\nMATCH\ne\nf\ng"), 0644)
+
+	tool := &GrepSearchTool{}
+	// Negative context_lines should be clamped to 0
+	out, err := tool.Execute(context.Background(), `{"pattern":"MATCH","path":".","context_lines":-5}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if strings.Contains(out, "---") {
+		t.Errorf("Negative context_lines should produce simple output without blocks, got:\n%s", out)
+	}
+
+	// context_lines > 10 should be clamped to 10
+	out, err = tool.Execute(context.Background(), `{"pattern":"MATCH","path":".","context_lines":100}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	// Should still work and show context (clamped to 10)
+	if !strings.Contains(out, "MATCH") {
+		t.Errorf("Expected MATCH in output, got:\n%s", out)
 	}
 }
 
