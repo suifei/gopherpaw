@@ -219,3 +219,73 @@ func TestSanitizeJSONArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestTryFixJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "valid json", input: `{"a":1}`, want: ""},
+		{name: "unclosed brace", input: `{"a":1`, want: `{"a":1}`},
+		{name: "unclosed array", input: `{"a":[1,2`, want: `{"a":[1,2]}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tryFixJSON(tt.input)
+			if got != tt.want {
+				t.Errorf("tryFixJSON(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTruncateStr(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{
+			name:   "empty string",
+			input:  "",
+			maxLen: 10,
+			want:   "",
+		},
+		{
+			name:   "shorter than max",
+			input:  "hello",
+			maxLen: 10,
+			want:   "hello",
+		},
+		{
+			name:   "equal to max",
+			input:  "hello",
+			maxLen: 5,
+			want:   "hello",
+		},
+		{
+			name:   "longer than max",
+			input:  "hello world",
+			maxLen: 5,
+			want:   "hello...",
+		},
+		{
+			name:   "max length 0 or negative",
+			input:  "hello",
+			maxLen: 0,
+			want:   "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateStr(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("truncateStr(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+		})
+	}
+}
