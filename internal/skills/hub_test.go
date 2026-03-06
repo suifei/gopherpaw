@@ -139,3 +139,89 @@ func TestJsonStr(t *testing.T) {
 		t.Error("expected empty for missing key")
 	}
 }
+
+func TestEnvIntOrDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		envKey string
+		envVal string
+		defVal int
+		want   int
+	}{
+		{
+			name:   "env not set",
+			envKey: "NONEXISTENT_INT_VAR_12345",
+			envVal: "",
+			defVal: 42,
+			want:   42,
+		},
+		{
+			name:   "env set to valid int",
+			envKey: "TEST_INT_VAR",
+			envVal: "100",
+			defVal: 42,
+			want:   100,
+		},
+		{
+			name:   "env set to invalid int",
+			envKey: "TEST_INVALID_INT_VAR",
+			envVal: "invalid",
+			defVal: 42,
+			want:   42,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envVal != "" {
+				t.Setenv(tt.envKey, tt.envVal)
+			}
+			got := envIntOrDefault(tt.envKey, tt.defVal)
+			if got != tt.want {
+				t.Errorf("envIntOrDefault(%q, %d) = %d, want %d", tt.envKey, tt.defVal, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnvDurationOrDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		envKey string
+		envVal string
+		defVal time.Duration
+		want   time.Duration
+	}{
+		{
+			name:   "env not set",
+			envKey: "NONEXISTENT_DURATION_VAR_12345",
+			envVal: "",
+			defVal: 10 * time.Second,
+			want:   10 * time.Second,
+		},
+		{
+			name:   "env set to valid duration",
+			envKey: "TEST_DURATION_VAR",
+			envVal: "5s",
+			defVal: 10 * time.Second,
+			want:   5 * time.Second,
+		},
+		{
+			name:   "env set to invalid duration",
+			envKey: "TEST_INVALID_DURATION_VAR",
+			envVal: "invalid",
+			defVal: 10 * time.Second,
+			want:   10 * time.Second,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envVal != "" {
+				t.Setenv(tt.envKey, tt.envVal)
+			}
+			got := envDurationOrDefault(tt.envKey, tt.defVal)
+			if got != tt.want {
+				t.Errorf("envDurationOrDefault(%q, %v) = %v, want %v", tt.envKey, tt.defVal, got, tt.want)
+			}
+		})
+	}
+}
