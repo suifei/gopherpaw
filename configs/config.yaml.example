@@ -1,11 +1,62 @@
-# GopherPaw 默认配置
-# 环境变量 GOPHERPAW_* 可覆盖对应项，如 GOPHERPAW_LLM_API_KEY
-# 工作目录默认 ~/.gopherpaw/，可用 GOPHERPAW_WORKING_DIR 覆盖
-# 使用 configs 作为工作目录时，将加载 configs/active_skills 下的内置 Skills
+# GopherPaw 配置文件示例
+# 
+# ============================================================================
+# 密钥管理最佳实践（⚠️ 重要：请仔细阅读）
+# ============================================================================
+# 
+# 🚨 安全原则：
+# 1. 永远不要将真实密钥提交到 Git 仓库
+# 2. 始终使用环境变量管理敏感信息
+# 3. 定期轮换密钥（建议每 90 天）
+# 4. 使用 pre-commit hooks 检查敏感信息泄露
+#
+# 📋 推荐的环境变量设置方法：
+#
+# Linux/macOS（在 ~/.bashrc 或 ~/.zshrc 中添加）：
+#   export GOPHERPAW_LLM_API_KEY="your-api-key-here"
+#   export GOPHERPAW_LLM_BASE_URL="https://api.openai.com/v1"
+#
+# Windows（PowerShell）：
+#   $env:GOPHERPAW_LLM_API_KEY="your-api-key-here"
+#
+# Docker：
+#   docker run -e GOPHERPAW_LLM_API_KEY="your-key" gopherpaw
+#
+# 🔐 常用密钥环境变量：
+# - GOPHERPAW_LLM_API_KEY: LLM API 密钥
+# - GOPHERPAW_LLM_BASE_URL: LLM API 端点
+# - GOPHERPAW_EMBEDDING_API_KEY: Embedding API 密钥
+# - GOPHERPAW_CHANNELS_TELEGRAM_BOT_TOKEN: Telegram Bot Token
+# - GOPHERPAW_CHANNELS_DISCORD_BOT_TOKEN: Discord Bot Token
+# - GOPHERPAW_CHANNELS_DINGTALK_CLIENT_ID: 钉钉 Client ID
+# - GOPHERPAW_CHANNELS_DINGTALK_CLIENT_SECRET: 钉钉 Client Secret
+# - GOPHERPAW_CHANNELS_FEISHU_APP_ID: 飞书 App ID
+# - GOPHERPAW_CHANNELS_FEISHU_APP_SECRET: 飞书 App Secret
+#
+# 📚 详细文档：
+# - 密钥管理最佳实践：.cursor/skills/security_best_practices/SKILL.md
+# - 环境变量完整列表：docs/api_spec.md "环境变量覆盖" 章节
+# - Pre-commit Hook 配置：.git/hooks/pre-commit
+#
+# ============================================================================
+# 其他常用环境变量
+# ============================================================================
+#
+# - GOPHERPAW_WORKING_DIR: 工作目录（默认 ~/.gopherpaw）
+# - GOPHERPAW_SECRET_DIR: 密钥目录（默认 ~/.gopherpaw.secret）
+# - GOPHERPAW_LOG_LEVEL: 日志级别（debug/info/warn/error）
+# - GOPHERPAW_ENABLED_CHANNELS: 启用的渠道（逗号分隔）
+#
 
+# 工作目录：存储数据、技能、记忆等
+# 默认：~/.gopherpaw（可通过 GOPHERPAW_WORKING_DIR 覆盖）
 working_dir: ""
+
+# 技能目录配置
 skills:
+  # 激活的技能目录（Agent 可使用）
   active_dir: "active_skills"
+  # 自定义技能目录（用户创建的技能）
   customized_dir: "customized_skills"
 
 # Runtime environment configuration
@@ -35,8 +86,17 @@ server:
   port: 8081
 
 agent:
-  max_input_length: 131072
   working_dir: ""
+  language: "zh"
+  defaults:
+    heartbeat:
+      enabled: false
+      every: "30m"
+      target: "main"
+      active_hours: null
+  running:
+    max_turns: 20
+    max_input_length: 131072
   system_prompt: |
     You are a helpful AI assistant with access to tools. Use them when appropriate.
 
@@ -51,13 +111,18 @@ agent:
     - **execute_shell_command**: For running shell commands (use with caution).
 
     When users ask about weather, stock prices, news, or other real-time data, you MUST call web_search first. Do not guess or say you cannot access the internet—use the tools.
-  max_turns: 20
 
 llm:
   provider: openai
   model: gpt-4o-mini
+  
+  # ⚠️ 安全提示：请使用环境变量 GOPHERPAW_LLM_API_KEY，不要在此填写真实密钥
+  # 环境变量优先级高于配置文件，设置后此处可留空
   api_key: ""
+  
+  # ⚠️ 如需自定义 API 端点，请使用环境变量 GOPHERPAW_LLM_BASE_URL
   base_url: "https://api.openai.com/v1"
+  
   ollama_url: "http://localhost:11434"
 
   # Multi-model routing (optional). When configured, the router auto-selects
@@ -79,9 +144,37 @@ llm:
   #     api_key: "sk-deepseek-xxx"                # optional: different key
 
 memory:
+  # 存储后端：memory（内存）、sqlite（SQLite 数据库）
   backend: memory
   db_path: "./data/gopherpaw.db"
+  
+  # 对话历史保留数量
   max_history: 50
+  
+  # 工作目录（用于存储记忆文件）
+  working_dir: "."
+  
+  # 记忆压缩配置（当上下文接近限制时自动压缩）
+  # 可通过环境变量覆盖：
+  # - GOPHERPAW_MEMORY_COMPACT_KEEP_RECENT
+  # - GOPHERPAW_MEMORY_COMPACT_RATIO
+  compact_threshold: 100000      # Token 阈值（触发压缩）
+  compact_keep_recent: 3          # 保留最近 N 条消息
+  compact_ratio: 0.7              # 目标压缩比例（0.0-1.0）
+  
+  # Embedding 配置（用于语义搜索）
+  # 可通过环境变量覆盖：
+  # - GOPHERPAW_EMBEDDING_API_KEY
+  # - GOPHERPAW_EMBEDDING_BASE_URL
+  # - GOPHERPAW_EMBEDDING_MODEL
+  embedding_api_key: ""
+  embedding_base_url: ""
+  embedding_model: ""
+  embedding_dimensions: 1024
+  embedding_max_cache: 2000
+  
+  # 全文搜索（FTS）开关
+  fts_enabled: true
 
 channels:
   console:
@@ -89,23 +182,31 @@ channels:
   telegram:
     enabled: false
     bot_prefix: ""
+    # ⚠️ 使用环境变量：GOPHERPAW_CHANNELS_TELEGRAM_BOT_TOKEN
     bot_token: ""
     http_proxy: ""
     http_proxy_auth: ""
   discord:
     enabled: false
     bot_prefix: "[BOT] "
+    # ⚠️ 使用环境变量：GOPHERPAW_CHANNELS_DISCORD_BOT_TOKEN
     bot_token: ""
     http_proxy: ""
     http_proxy_auth: ""
   dingtalk:
     enabled: false
     bot_prefix: "[BOT] "
+    # ⚠️ 使用环境变量：
+    # - GOPHERPAW_CHANNELS_DINGTALK_CLIENT_ID
+    # - GOPHERPAW_CHANNELS_DINGTALK_CLIENT_SECRET
     client_id: ""
     client_secret: ""
   feishu:
     enabled: false
     bot_prefix: "[BOT] "
+    # ⚠️ 使用环境变量：
+    # - GOPHERPAW_CHANNELS_FEISHU_APP_ID
+    # - GOPHERPAW_CHANNELS_FEISHU_APP_SECRET
     app_id: ""
     app_secret: ""
     encrypt_key: ""
@@ -119,13 +220,31 @@ channels:
 mcp:
   servers: {}
 
+# 定时任务调度器
 scheduler:
   enabled: false
+  
+  # 心跳任务：定期运行 Agent（读取 HEARTBEAT.md 作为查询）
+  # 可通过环境变量覆盖：
+  # - GOPHERPAW_HEARTBEAT_FILE: 心跳文件路径
   heartbeat:
+    # 执行间隔：支持 "30m"、"1h"、"2h30m" 等格式
     every: "30m"
+    
+    # 目标渠道："main"（默认渠道）或 "last"（最后使用的渠道）
     target: "main"
+    
+    # 活跃时段（仅在指定时间段内执行）
+    # 例如：08:00-22:00（24小时制）
     active_hours: null
+    # active_hours:
+    #   start: "08:00"
+    #   end: "22:00"
 
+# 日志配置
+# 可通过环境变量覆盖：
+# - GOPHERPAW_LOG_LEVEL
+# - GOPHERPAW_LOG_FORMAT
 log:
-  level: info
-  format: json
+  level: info      # debug, info, warn, error
+  format: json     # json, console

@@ -1,31 +1,80 @@
 copaw-source/**/*
 go.sum
 
+# ============================================================================
+# 敏感信息和密钥文件（⚠️ 绝对不要提交）
+# ============================================================================
+
+# 配置文件（包含真实密钥）
+config.yaml
+configs/config.yaml
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# 密钥和凭证文件
+*.secret
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+secrets.json
+envs.json
+providers.json
+
+# 密钥目录
+.secret/
+.secrets/
+secrets/
+
+# 数据库文件（可能包含敏感信息）
+*.db
+*.sqlite
+*.sqlite3
+
+# ============================================================================
+# 编译产物和可执行文件
+# ============================================================================
+
 *.exe
 *.exe~
 *.exe.old
 *.exe.old~
 
-*.db
 *.out
 coverage.*
+gopherpaw
 
+# ============================================================================
+# 开发工具和临时文件
+# ============================================================================
 
 ai_collaboration_guide.md
 CONTEXT.md
 
-
+# Cursor IDE
 .cursor/**/*
-config.yaml
+# 但保留 skills 目录（包含团队共享的技能）
+!.cursor/skills/
+!.cursor/skills/**
+
+# ============================================================================
+# 文档（按需忽略）
+# ============================================================================
+
+/AGENTS.md
+BENCHMARKS_SUMMARY.md
+
+# API 规范文档（包含敏感配置示例）
 docs/api_spec.md
 docs/architecture_spec.md
 docs/feature_matrix.md
-AGENTS.md
 docs/benchmark_summary.md
-
-
-BENCHMARKS_SUMMARY.md
-gopherpaw
 docs/concurrency_analysis_report.md
 docs/copaw_python_files.txt
 docs/copaw_to_gopherpaw_plan.md
@@ -33,8 +82,12 @@ docs/coverage_report_final.md
 docs/race_detection_guide.md
 docs/copaw_python_files.txt
 docs/copaw_to_gopherpaw_plan.md
+
+# 脚本（可能包含临时密钥）
 scripts/list_copaw_python_files.sh
 scripts/print_plan_prompts.ps1
+
+# 对齐和参考文档
 docs/alignment/00-executive-summary.md
 docs/alignment/01-config-system-alignment.md
 docs/alignment/02-agent-system-alignment.md
@@ -46,6 +99,8 @@ docs/alignment/07-deploy-alignment.md
 docs/alignment/08-implementation-roadmap.md
 docs/alignment/09-test-verification.md
 docs/alignment/README.md
+docs/alignment/ALIGNMENT_VERIFICATION_REPORT.md
+
 docs/copaw-reference/01-config-system.md
 docs/copaw-reference/02-agents-system.md
 docs/copaw-reference/03-skills-system.md
@@ -54,3 +109,9 @@ docs/copaw-reference/05-tools-system.md
 docs/copaw-reference/06-channels-system.md
 docs/copaw-reference/07-scripts-deploy.md
 docs/copaw-reference/README.md
+
+# 测试报告
+docs/bun_nodejs_installation_guide.md
+docs/js_skills_test_report.md
+docs/new_js_skills_report.md
+docs/production_verification_report.md

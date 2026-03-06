@@ -1,0 +1,9 @@
+{
+  "name": "file_converter",
+  "dependencies": {
+    "yaml": "^2.3.0",
+    "toml": "^3.0.0",
+    "csv-parse": "^5.5.0",
+    "csv-stringify": "^6.4.0"
+  }
+}

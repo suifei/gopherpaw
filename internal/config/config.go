@@ -20,11 +20,12 @@ type Config struct {
 	Memory     MemoryConfig    `mapstructure:"memory" yaml:"memory"`
 	Channels   ChannelsConfig  `mapstructure:"channels" yaml:"channels"`
 	Scheduler  SchedulerConfig `mapstructure:"scheduler" yaml:"scheduler"`
-	MCP        MCPConfig       `mapstructure:"mcp" yaml:"mcp"`
 	Log        LogConfig       `mapstructure:"log" yaml:"log"`
-	WorkingDir string          `mapstructure:"working_dir" yaml:"working_dir"`
 	Skills     SkillsConfig    `mapstructure:"skills" yaml:"skills"`
 	Runtime    RuntimeConfig   `mapstructure:"runtime" yaml:"runtime"`
+	MCP        MCPConfig       `mapstructure:"mcp" yaml:"mcp"`
+	WorkingDir string          `mapstructure:"working_dir" yaml:"working_dir"`
+	MediaDir   string          `mapstructure:"media_dir" yaml:"media_dir"`
 }
 
 // RuntimeConfig holds runtime environment settings for Python and Node.js.
@@ -62,10 +63,23 @@ type ServerConfig struct {
 
 // AgentConfig holds agent runtime settings.
 type AgentConfig struct {
-	SystemPrompt   string `mapstructure:"system_prompt" yaml:"system_prompt"`
-	MaxTurns       int    `mapstructure:"max_turns" yaml:"max_turns"`
-	MaxInputLength int    `mapstructure:"max_input_length" yaml:"max_input_length"`
-	WorkingDir     string `mapstructure:"working_dir" yaml:"working_dir"`
+	SystemPrompt string              `mapstructure:"system_prompt" yaml:"system_prompt"`
+	WorkingDir   string              `mapstructure:"working_dir" yaml:"working_dir"`
+	Defaults     AgentDefaultsConfig `mapstructure:"defaults" yaml:"defaults"`
+	Running      AgentRunningConfig  `mapstructure:"running" yaml:"running"`
+	Language     string              `mapstructure:"language" yaml:"language"`
+}
+
+// AgentDefaultsConfig holds default agent configuration (e.g., heartbeat).
+type AgentDefaultsConfig struct {
+	Heartbeat *HeartbeatConfig `mapstructure:"heartbeat" yaml:"heartbeat"`
+}
+
+// AgentRunningConfig holds agent runtime behavior configuration.
+type AgentRunningConfig struct {
+	MaxTurns         int    `mapstructure:"max_turns" yaml:"max_turns"`
+	MaxInputLength   int    `mapstructure:"max_input_length" yaml:"max_input_length"`
+	NamesakeStrategy string `mapstructure:"namesake_strategy" yaml:"namesake_strategy"`
 }
 
 // ModelSlot defines a named model with optional provider/credential overrides and capability tags.
@@ -148,45 +162,50 @@ type ChannelsConfig struct {
 
 // ConsoleConfig holds console channel settings (stdin/stdout for dev).
 type ConsoleConfig struct {
-	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
+	Enabled            bool `mapstructure:"enabled" yaml:"enabled"`
+	FilterToolMessages bool `mapstructure:"filter_tool_messages" yaml:"filter_tool_messages"`
 }
 
 // TelegramConfig holds Telegram channel settings.
 type TelegramConfig struct {
-	Enabled       bool   `mapstructure:"enabled" yaml:"enabled"`
-	BotPrefix     string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
-	BotToken      string `mapstructure:"bot_token" yaml:"bot_token"`
-	HTTPProxy     string `mapstructure:"http_proxy" yaml:"http_proxy"`
-	HTTPProxyAuth string `mapstructure:"http_proxy_auth" yaml:"http_proxy_auth"`
+	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
+	BotPrefix          string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
+	BotToken           string `mapstructure:"bot_token" yaml:"bot_token"`
+	HTTPProxy          string `mapstructure:"http_proxy" yaml:"http_proxy"`
+	HTTPProxyAuth      string `mapstructure:"http_proxy_auth" yaml:"http_proxy_auth"`
+	FilterToolMessages bool   `mapstructure:"filter_tool_messages" yaml:"filter_tool_messages"`
 }
 
 // DiscordConfig holds Discord channel settings.
 type DiscordConfig struct {
-	Enabled       bool   `mapstructure:"enabled" yaml:"enabled"`
-	BotPrefix     string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
-	BotToken      string `mapstructure:"bot_token" yaml:"bot_token"`
-	HTTPProxy     string `mapstructure:"http_proxy" yaml:"http_proxy"`
-	HTTPProxyAuth string `mapstructure:"http_proxy_auth" yaml:"http_proxy_auth"`
+	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
+	BotPrefix          string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
+	BotToken           string `mapstructure:"bot_token" yaml:"bot_token"`
+	HTTPProxy          string `mapstructure:"http_proxy" yaml:"http_proxy"`
+	HTTPProxyAuth      string `mapstructure:"http_proxy_auth" yaml:"http_proxy_auth"`
+	FilterToolMessages bool   `mapstructure:"filter_tool_messages" yaml:"filter_tool_messages"`
 }
 
 // DingTalkConfig holds DingTalk channel settings.
 type DingTalkConfig struct {
-	Enabled      bool   `mapstructure:"enabled" yaml:"enabled"`
-	BotPrefix    string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
-	ClientID     string `mapstructure:"client_id" yaml:"client_id"`
-	ClientSecret string `mapstructure:"client_secret" yaml:"client_secret"`
-	UseStream    bool   `mapstructure:"use_stream" yaml:"use_stream"` // Use Stream mode (WebSocket long connection)
+	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
+	BotPrefix          string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
+	ClientID           string `mapstructure:"client_id" yaml:"client_id"`
+	ClientSecret       string `mapstructure:"client_secret" yaml:"client_secret"`
+	UseStream          bool   `mapstructure:"use_stream" yaml:"use_stream"` // Use Stream mode (WebSocket long connection)
+	FilterToolMessages bool   `mapstructure:"filter_tool_messages" yaml:"filter_tool_messages"`
 }
 
 // FeishuConfig holds Feishu channel settings.
 type FeishuConfig struct {
-	Enabled           bool   `mapstructure:"enabled" yaml:"enabled"`
-	BotPrefix         string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
-	AppID             string `mapstructure:"app_id" yaml:"app_id"`
-	AppSecret         string `mapstructure:"app_secret" yaml:"app_secret"`
-	EncryptKey        string `mapstructure:"encrypt_key" yaml:"encrypt_key"`
-	VerificationToken string `mapstructure:"verification_token" yaml:"verification_token"`
-	UseWebSocket      bool   `mapstructure:"use_websocket" yaml:"use_websocket"` // Use WebSocket long connection
+	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
+	BotPrefix          string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
+	AppID              string `mapstructure:"app_id" yaml:"app_id"`
+	AppSecret          string `mapstructure:"app_secret" yaml:"app_secret"`
+	EncryptKey         string `mapstructure:"encrypt_key" yaml:"encrypt_key"`
+	VerificationToken  string `mapstructure:"verification_token" yaml:"verification_token"`
+	UseWebSocket       bool   `mapstructure:"use_websocket" yaml:"use_websocket"` // Use WebSocket long connection
+	FilterToolMessages bool   `mapstructure:"filter_tool_messages" yaml:"filter_tool_messages"`
 }
 
 // QQConfig holds QQ channel settings.
@@ -337,9 +356,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("agent.system_prompt", "You are a helpful AI assistant.")
-	v.SetDefault("agent.max_turns", 20)
-	v.SetDefault("agent.max_input_length", 131072)
 	v.SetDefault("agent.working_dir", "")
+	v.SetDefault("agent.defaults.heartbeat.every", "30m")
+	v.SetDefault("agent.defaults.heartbeat.target", "main")
+	v.SetDefault("agent.running.max_turns", 20)
+	v.SetDefault("agent.running.max_input_length", 131072)
+	v.SetDefault("agent.language", "zh")
 	v.SetDefault("llm.provider", "openai")
 	v.SetDefault("llm.model", "gpt-4o-mini")
 	v.SetDefault("llm.ollama_url", "http://localhost:11434")
@@ -376,9 +398,17 @@ func defaultConfig() *Config {
 			Port: 8080,
 		},
 		Agent: AgentConfig{
-			SystemPrompt:   "You are a helpful AI assistant.",
-			MaxTurns:       20,
-			MaxInputLength: 131072,
+			SystemPrompt: "You are a helpful AI assistant.",
+			Defaults: AgentDefaultsConfig{
+				Heartbeat: &HeartbeatConfig{
+					Every:  "30m",
+					Target: "main",
+				},
+			},
+			Running: AgentRunningConfig{
+				MaxTurns:       20,
+				MaxInputLength: 131072,
+			},
 		},
 		LLM: LLMConfig{
 			Provider:  "openai",
@@ -457,15 +487,125 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv(envPrefix + "WORKING_DIR"); v != "" {
 		cfg.WorkingDir = v
 	}
+	// Memory compaction overrides
+	if v := GetEnvInt(envPrefix+"MEMORY_COMPACT_KEEP_RECENT", 0); v > 0 {
+		cfg.Memory.CompactKeepRecent = v
+	}
+	if v := GetEnvFloat(envPrefix+"MEMORY_COMPACT_RATIO", 0); v > 0 {
+		cfg.Memory.CompactRatio = v
+	}
+}
+
+// GetEnvString returns the value of an environment variable or the default.
+func GetEnvString(key, defaultValue string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultValue
+}
+
+// GetEnvBool returns a boolean environment variable.
+func GetEnvBool(key string, defaultValue bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v == "true" || v == "1" || v == "yes" || v == "on"
+}
+
+// GetEnvInt returns an integer environment variable.
+func GetEnvInt(key string, defaultValue int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	var i int
+	if _, err := fmt.Sscanf(v, "%d", &i); err == nil {
+		return i
+	}
+	return defaultValue
+}
+
+// GetEnvFloat returns a float environment variable.
+func GetEnvFloat(key string, defaultValue float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	var f float64
+	if _, err := fmt.Sscanf(v, "%f", &f); err == nil {
+		return f
+	}
+	return defaultValue
+}
+
+// GetEnvSlice returns a comma-separated environment variable as a slice.
+func GetEnvSlice(key string, defaultValue []string) []string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return defaultValue
+	}
+	parts := strings.Split(v, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return defaultValue
+	}
+	return result
+}
+
+// IsRunningInContainer returns true if running inside a container.
+func IsRunningInContainer() bool {
+	return GetEnvBool(envPrefix+"RUNNING_IN_CONTAINER", false)
+}
+
+// GetEnabledChannels returns the list of enabled channels from env or config.
+func GetEnabledChannels() []string {
+	return GetEnvSlice(envPrefix+"ENABLED_CHANNELS", nil)
+}
+
+// GetCORSOrigins returns the list of CORS origins from env.
+func GetCORSOrigins() []string {
+	return GetEnvSlice(envPrefix+"CORS_ORIGINS", nil)
+}
+
+// GetConfigFile returns the config file path from env or default.
+func GetConfigFile() string {
+	return GetEnvString(envPrefix+"CONFIG_FILE", "config.yaml")
+}
+
+// GetJobsFile returns the jobs file path from env or default.
+func GetJobsFile() string {
+	return GetEnvString(envPrefix+"JOBS_FILE", "jobs.json")
+}
+
+// GetChatsFile returns the chats file path from env or default.
+func GetChatsFile() string {
+	return GetEnvString(envPrefix+"CHATS_FILE", "chats.json")
+}
+
+// GetHeartbeatFile returns the heartbeat file path from env or default.
+func GetHeartbeatFile() string {
+	return GetEnvString(envPrefix+"HEARTBEAT_FILE", "HEARTBEAT.md")
+}
+
+// GetModelProviderCheckTimeout returns the provider check timeout in seconds.
+func GetModelProviderCheckTimeout() float64 {
+	return GetEnvFloat(envPrefix+"MODEL_PROVIDER_CHECK_TIMEOUT", 5.0)
 }
 
 // Validate checks configuration for required fields and valid ranges.
 func Validate(cfg *Config) error {
-	if cfg.Agent.MaxTurns < 1 || cfg.Agent.MaxTurns > 100 {
-		return fmt.Errorf("agent.max_turns must be 1-100, got %d", cfg.Agent.MaxTurns)
+	if cfg.Agent.Running.MaxTurns < 1 || cfg.Agent.Running.MaxTurns > 100 {
+		return fmt.Errorf("agent.running.max_turns must be 1-100, got %d", cfg.Agent.Running.MaxTurns)
 	}
-	if cfg.Agent.MaxInputLength > 0 && cfg.Agent.MaxInputLength < 1000 {
-		return fmt.Errorf("agent.max_input_length must be >= 1000 when set, got %d", cfg.Agent.MaxInputLength)
+	if cfg.Agent.Running.MaxInputLength > 0 && cfg.Agent.Running.MaxInputLength < 1000 {
+		return fmt.Errorf("agent.running.max_input_length must be >= 1000 when set, got %d", cfg.Agent.Running.MaxInputLength)
 	}
 	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be 1-65535, got %d", cfg.Server.Port)
@@ -483,18 +623,27 @@ func Validate(cfg *Config) error {
 
 // ResolveWorkingDir returns the effective working directory (package-level).
 // Priority: GOPHERPAW_WORKING_DIR env > config working_dir > ~/.gopherpaw/
-func ResolveWorkingDir(cfgDir string) string {
+func ResolveWorkingDir(cfgWorkingDir string) string {
 	if v := os.Getenv(envPrefix + "WORKING_DIR"); v != "" {
 		return expandPath(v)
 	}
-	if cfgDir != "" {
-		return expandPath(cfgDir)
+	if cfgWorkingDir != "" {
+		return expandPath(cfgWorkingDir)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".gopherpaw"
-	}
+	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".gopherpaw")
+}
+
+// ResolveMediaDir returns the effective media directory.
+// Priority: GOPHERPAW_MEDIA_DIR env > config media_dir > {working_dir}/media
+func ResolveMediaDir(cfgMediaDir, workingDir string) string {
+	if v := os.Getenv(envPrefix + "MEDIA_DIR"); v != "" {
+		return expandPath(v)
+	}
+	if cfgMediaDir != "" {
+		return expandPath(cfgMediaDir)
+	}
+	return filepath.Join(workingDir, "media")
 }
 
 func expandPath(p string) string {
@@ -570,4 +719,41 @@ func (c *MemoryConfig) ResolveDBPath() string {
 		return p
 	}
 	return abs
+}
+
+// GetSecretDir returns the secret directory path for storing sensitive data.
+// Priority: GOPHERPAW_SECRET_DIR env > {working_dir}.secret
+func GetSecretDir() string {
+	if v := os.Getenv(envPrefix + "SECRET_DIR"); v != "" {
+		return expandPath(v)
+	}
+	// Default: {working_dir}.secret
+	workingDir := ResolveWorkingDir("")
+	return workingDir + ".secret"
+}
+
+// GetEnvsJSONPath returns the path to envs.json under the secret directory.
+func GetEnvsJSONPath() string {
+	return filepath.Join(GetSecretDir(), "envs.json")
+}
+
+// GetProvidersJSONPath returns the path to providers.json under the secret directory.
+func GetProvidersJSONPath() string {
+	return filepath.Join(GetSecretDir(), "providers.json")
+}
+
+// EnsureSecretDir creates the secret directory with proper permissions (0700).
+func EnsureSecretDir() error {
+	secretDir := GetSecretDir()
+	if err := os.MkdirAll(secretDir, 0700); err != nil {
+		return fmt.Errorf("create secret dir: %w", err)
+	}
+	// Best effort: set permissions even if dir already exists
+	os.Chmod(secretDir, 0700)
+	return nil
+}
+
+// chmodBestEffort sets file permissions, ignoring errors on unsupported systems.
+func chmodBestEffort(path string, mode os.FileMode) {
+	os.Chmod(path, mode)
 }

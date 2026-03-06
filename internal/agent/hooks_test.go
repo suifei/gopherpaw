@@ -11,7 +11,7 @@ import (
 
 func TestMemoryCompactionHook_BelowThreshold(t *testing.T) {
 	hook := MemoryCompactionHook(100000, 10)
-	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	msgs := []Message{
 		{Role: "system", Content: "You are helpful."},
 		{Role: "user", Content: "hi"},
@@ -28,7 +28,7 @@ func TestMemoryCompactionHook_BelowThreshold(t *testing.T) {
 
 func TestMemoryCompactionHook_FewMessages(t *testing.T) {
 	hook := MemoryCompactionHook(10, 10)
-	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	msgs := []Message{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "hi"},
@@ -54,7 +54,7 @@ func TestMemoryCompactionHook_TriggersCompact(t *testing.T) {
 		},
 	}
 	hook := MemoryCompactionHook(1, 2)
-	agent := NewReact(&mockLLM{}, mem, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(&mockLLM{}, mem, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 
 	msgs := make([]Message, 0, 15)
 	msgs = append(msgs, Message{Role: "system", Content: "sys"})
@@ -77,7 +77,7 @@ func TestMemoryCompactionHook_TriggersCompact(t *testing.T) {
 func TestBootstrapHook_NoBootstrapFile(t *testing.T) {
 	dir := t.TempDir()
 	hook := BootstrapHook(dir, "zh")
-	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	msgs := []Message{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "hi"},
@@ -97,7 +97,7 @@ func TestBootstrapHook_WithBootstrapFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := BootstrapHook(dir, "zh")
-	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	msgs := []Message{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "hi"},
@@ -123,7 +123,7 @@ func TestBootstrapHook_AlreadyCompleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := BootstrapHook(dir, "zh")
-	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(&mockLLM{}, &mockMemory{}, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	msgs := []Message{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "hi"},

@@ -60,7 +60,7 @@ func MemoryCompactionHook(threshold int, keepRecent int) Hook {
 			return messages, nil
 		}
 
-		history, err := agent.memory.Load(ctx, chatID, agent.cfg.MaxTurns*4)
+		history, err := agent.memory.Load(ctx, chatID, agent.cfg.Running.MaxTurns*4)
 		if err != nil {
 			return messages, nil
 		}

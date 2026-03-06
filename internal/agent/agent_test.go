@@ -85,7 +85,7 @@ func TestReactAgent_Run_NoTools(t *testing.T) {
 		},
 	}
 	mem := &mockMemory{}
-	agent := NewReact(llm, mem, nil, config.AgentConfig{SystemPrompt: "You are helpful.", MaxTurns: 5})
+	agent := NewReact(llm, mem, nil, config.AgentConfig{SystemPrompt: "You are helpful.", Running: config.AgentRunningConfig{MaxTurns: 5}})
 	ctx := context.Background()
 	out, err := agent.Run(ctx, "chat1", "hi")
 	if err != nil {
@@ -119,7 +119,7 @@ func TestReactAgent_Run_ContextCancel(t *testing.T) {
 			return nil, ctx.Err()
 		},
 	}
-	agent := NewReact(llm, &mockMemory{}, nil, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(llm, &mockMemory{}, nil, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := agent.Run(ctx, "c1", "hi")
@@ -211,7 +211,7 @@ func TestReactAgent_ParallelToolExecution(t *testing.T) {
 	tools := []Tool{tool1, tool2, tool3}
 	agent := NewReact(llm, mem, tools, config.AgentConfig{
 		SystemPrompt: "You are helpful.",
-		MaxTurns:     5,
+		Running:      config.AgentRunningConfig{MaxTurns: 5},
 	})
 
 	ctx := context.Background()
@@ -259,7 +259,7 @@ func TestReactAgent_ParallelToolExecution_SingleTool(t *testing.T) {
 		},
 	}
 
-	agent := NewReact(llm, &mockMemory{}, []Tool{tool}, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(llm, &mockMemory{}, []Tool{tool}, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	_, err := agent.Run(context.Background(), "chat1", "test")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
@@ -306,7 +306,7 @@ func TestReactAgent_ParallelToolExecution_WithError(t *testing.T) {
 		},
 	}
 
-	agent := NewReact(llm, &mockMemory{}, []Tool{tool1, tool2}, config.AgentConfig{MaxTurns: 5})
+	agent := NewReact(llm, &mockMemory{}, []Tool{tool1, tool2}, config.AgentConfig{Running: config.AgentRunningConfig{MaxTurns: 5}})
 	result, err := agent.Run(context.Background(), "chat1", "test")
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)

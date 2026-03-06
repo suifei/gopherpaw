@@ -94,6 +94,20 @@ const (
 	ToolChoiceRequired ToolChoiceMode = "required"
 )
 
+// NamesakeStrategy defines how to handle duplicate tool names.
+type NamesakeStrategy string
+
+const (
+	// NamesakeOverride replaces existing tool with same name.
+	NamesakeOverride NamesakeStrategy = "override"
+	// NamesakeSkip keeps existing tool, ignores new one (CoPaw default).
+	NamesakeSkip NamesakeStrategy = "skip"
+	// NamesakeRaise returns error on duplicate tool name.
+	NamesakeRaise NamesakeStrategy = "raise"
+	// NamesakeRename auto-renames new tool (tool_2, tool_3, ...).
+	NamesakeRename NamesakeStrategy = "rename"
+)
+
 // ToolChoice specifies tool selection behavior for chat completion.
 // Use mode for auto/none/required, or set ForceTool for a specific tool.
 type ToolChoice struct {

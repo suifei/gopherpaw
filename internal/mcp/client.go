@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/suifei/gopherpaw/internal/agent"
 	"github.com/suifei/gopherpaw/internal/config"
@@ -87,6 +88,29 @@ type MCPClient struct {
 	Description string
 	Transport   Transport
 	Enabled     bool
+
+	// Reconnection support
+	reconnectCfg   *ReconnectConfig
+	reconnectCount int
+	stopReconnect  chan struct{}
+}
+
+// ReconnectConfig holds reconnection settings.
+type ReconnectConfig struct {
+	Enabled      bool          // Enable auto-reconnect
+	MaxRetries   int           // Max retry attempts (0 = infinite)
+	InitialDelay time.Duration // Initial reconnect delay
+	MaxDelay     time.Duration // Maximum reconnect delay
+}
+
+// DefaultReconnectConfig returns default reconnection settings.
+func DefaultReconnectConfig() *ReconnectConfig {
+	return &ReconnectConfig{
+		Enabled:      true,
+		MaxRetries:   5,
+		InitialDelay: 1 * time.Second,
+		MaxDelay:     30 * time.Second,
+	}
 }
 
 // NewMCPClient creates a new MCP client from config.
@@ -115,11 +139,95 @@ func NewMCPClient(name string, cfg config.MCPServerConfig) (*MCPClient, error) {
 	}
 
 	return &MCPClient{
-		Name:        name,
-		Description: cfg.Description,
-		Transport:   t,
-		Enabled:     enabled,
+		Name:           name,
+		Description:    cfg.Description,
+		Transport:      t,
+		Enabled:        enabled,
+		reconnectCfg:   DefaultReconnectConfig(),
+		reconnectCount: 0,
+		stopReconnect:  make(chan struct{}),
 	}, nil
+}
+
+// StartWithReconnect starts the client with auto-reconnection support.
+func (c *MCPClient) StartWithReconnect(ctx context.Context) error {
+	if err := c.Transport.Start(ctx); err != nil {
+		return err
+	}
+
+	if c.reconnectCfg != nil && c.reconnectCfg.Enabled {
+		go c.reconnectLoop(ctx)
+	}
+
+	return nil
+}
+
+// reconnectLoop monitors connection and reconnects on failure.
+func (c *MCPClient) reconnectLoop(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.stopReconnect:
+			return
+		case <-ticker.C:
+			if !c.Transport.IsRunning() {
+				c.tryReconnect(ctx)
+			}
+		}
+	}
+}
+
+// tryReconnect attempts to reconnect with exponential backoff.
+func (c *MCPClient) tryReconnect(ctx context.Context) {
+	if c.reconnectCfg.MaxRetries > 0 && c.reconnectCount >= c.reconnectCfg.MaxRetries {
+		logger.L().Warn("MCP client max retries reached",
+			zap.String("client", c.Name),
+			zap.Int("attempts", c.reconnectCount),
+		)
+		return
+	}
+
+	c.reconnectCount++
+	delay := c.calculateBackoff()
+
+	logger.L().Info("Attempting MCP client reconnect",
+		zap.String("client", c.Name),
+		zap.Int("attempt", c.reconnectCount),
+		zap.Duration("delay", delay),
+	)
+
+	time.Sleep(delay)
+
+	if err := c.Transport.Start(ctx); err != nil {
+		logger.L().Warn("MCP client reconnect failed",
+			zap.String("client", c.Name),
+			zap.Error(err),
+		)
+	} else {
+		logger.L().Info("MCP client reconnected successfully",
+			zap.String("client", c.Name),
+		)
+		c.reconnectCount = 0 // Reset on success
+	}
+}
+
+// calculateBackoff calculates exponential backoff delay.
+func (c *MCPClient) calculateBackoff() time.Duration {
+	delay := c.reconnectCfg.InitialDelay * time.Duration(1<<uint(c.reconnectCount-1))
+	if delay > c.reconnectCfg.MaxDelay {
+		delay = c.reconnectCfg.MaxDelay
+	}
+	return delay
+}
+
+// StopWithReconnect stops the client and reconnection loop.
+func (c *MCPClient) StopWithReconnect() error {
+	close(c.stopReconnect)
+	return c.Transport.Stop()
 }
 
 // MCPManager manages multiple MCP clients and provides tools.

@@ -146,7 +146,19 @@ func runApp(cmd *cobra.Command, args []string) error {
 		agentCfg.SystemPrompt = systemPrompt
 
 		ag := agent.NewReact(llmProvider, memoryStore, toolsList, agentCfg)
-		log.Info("Agent ready", zap.String("agent", "react"))
+
+		// Add Bootstrap Hook for first-time user guidance
+		ag.AddHook(agent.BootstrapHook(workingDir, cfg.Agent.Language))
+
+		// Add Memory Compaction Hook if threshold is configured
+		if cfg.Memory.CompactThreshold > 0 {
+			ag.AddHook(agent.MemoryCompactionHook(cfg.Memory.CompactThreshold, cfg.Memory.CompactKeepRecent))
+		}
+
+		log.Info("Agent ready",
+			zap.String("agent", "react"),
+			zap.Int("hooks", 2),
+		)
 
 		channelMgr := channels.NewManager(ag, cfg.Channels)
 		sched := scheduler.New(ag, cfg.Scheduler)

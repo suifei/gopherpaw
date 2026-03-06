@@ -3,6 +3,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -345,4 +346,29 @@ func RepairEmptyToolInputs(messages []Message) []Message {
 		}
 	}
 	return messages
+}
+
+// BuildEnvContext builds environment context string with session/user/channel info.
+// This aligns with CoPaw's build_env_context function.
+func BuildEnvContext(sessionID, userID, channel, workingDir string) string {
+	var parts []string
+
+	if sessionID != "" {
+		parts = append(parts, fmt.Sprintf("- 当前的session_id: %s", sessionID))
+	}
+	if userID != "" {
+		parts = append(parts, fmt.Sprintf("- 当前的user_id: %s", userID))
+	}
+	if channel != "" {
+		parts = append(parts, fmt.Sprintf("- 当前的channel: %s", channel))
+	}
+	if workingDir != "" {
+		parts = append(parts, fmt.Sprintf("- 工作目录: %s", workingDir))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "## 环境上下文\n\n" + strings.Join(parts, "\n") + "\n"
 }

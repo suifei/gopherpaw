@@ -23,6 +23,9 @@ type Skill struct {
 	Content     string
 	Enabled     bool
 	Path        string
+	Scripts     map[string]string // Script files from scripts/ directory
+	References  map[string]string // Reference docs from references/ directory
+	ExtraFiles  map[string][]byte // Extra files (binary or text)
 }
 
 // Manager loads and manages skills from directories.
@@ -118,12 +121,62 @@ func loadSkill(path string) (*Skill, error) {
 	if fm.Name == "" {
 		fm.Name = filepath.Base(filepath.Dir(path))
 	}
-	return &Skill{
+
+	skillDir := filepath.Dir(path)
+
+	skill := &Skill{
 		Name:        fm.Name,
 		Description: fm.Description,
 		Content:     content,
 		Path:        path,
-	}, nil
+		Scripts:     loadDirectoryTextFiles(filepath.Join(skillDir, "scripts")),
+		References:  loadDirectoryTextFiles(filepath.Join(skillDir, "references")),
+		ExtraFiles:  loadDirectoryBinaryFiles(filepath.Join(skillDir, "extra_files")),
+	}
+
+	return skill, nil
+}
+
+// loadDirectoryTextFiles loads all text files from a directory into a map.
+func loadDirectoryTextFiles(dir string) map[string]string {
+	result := make(map[string]string)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return result
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		result[e.Name()] = string(data)
+	}
+	return result
+}
+
+// loadDirectoryBinaryFiles loads all files (binary or text) from a directory into a map.
+func loadDirectoryBinaryFiles(dir string) map[string][]byte {
+	result := make(map[string][]byte)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return result
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		result[e.Name()] = data
+	}
+	return result
 }
 
 // GetEnabledSkills returns all enabled skills.

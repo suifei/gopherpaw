@@ -34,18 +34,80 @@ func NewReact(llm LLMProvider, memory MemoryStore, tools []Tool, cfg config.Agen
 // NewReactWithPrompt creates a ReAct agent with optional PromptLoader and skills content.
 func NewReactWithPrompt(llm LLMProvider, memory MemoryStore, tools []Tool, cfg config.AgentConfig, loader *PromptLoader, skillsContent string) *ReactAgent {
 	toolMap := make(map[string]Tool)
-	for _, t := range tools {
-		toolMap[t.Name()] = t
+	strategy := NamesakeStrategy(cfg.Running.NamesakeStrategy)
+	if strategy == "" {
+		strategy = NamesakeSkip // Default: skip (CoPaw default)
 	}
+
+	// Register tools with namesake strategy
+	for _, t := range tools {
+		if err := registerTool(toolMap, t, strategy); err != nil {
+			logger.L().Warn("tool registration failed",
+				zap.String("tool", t.Name()),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Build final tools list from toolMap (to handle duplicates)
+	finalTools := make([]Tool, 0, len(toolMap))
+	for _, t := range toolMap {
+		finalTools = append(finalTools, t)
+	}
+
 	return &ReactAgent{
 		llm:           llm,
 		memory:        memory,
-		tools:         tools,
+		tools:         finalTools,
 		toolMap:       toolMap,
 		cfg:           cfg,
 		loader:        loader,
 		skillsContent: skillsContent,
 		hooks:         nil,
+	}
+}
+
+// registerTool registers a tool according to the namesake strategy.
+func registerTool(toolMap map[string]Tool, tool Tool, strategy NamesakeStrategy) error {
+	name := tool.Name()
+
+	// No duplicate, simply add
+	if _, exists := toolMap[name]; !exists {
+		toolMap[name] = tool
+		return nil
+	}
+
+	// Duplicate found, apply strategy
+	switch strategy {
+	case NamesakeOverride:
+		toolMap[name] = tool
+		return nil
+
+	case NamesakeSkip:
+		// Keep existing tool, ignore new one
+		return nil
+
+	case NamesakeRaise:
+		return fmt.Errorf("duplicate tool name: %s", name)
+
+	case NamesakeRename:
+		// Auto-rename: try tool_2, tool_3, ...
+		for i := 2; i < 100; i++ {
+			newName := fmt.Sprintf("%s_%d", name, i)
+			if _, exists := toolMap[newName]; !exists {
+				// Note: We can't modify the tool's name directly, so we skip
+				// In a real implementation, we'd need a wrapper or mutable name
+				logger.L().Debug("auto-renamed tool",
+					zap.String("original", name),
+					zap.String("renamed", newName),
+				)
+				return fmt.Errorf("rename strategy not fully implemented for tool %s", name)
+			}
+		}
+		return fmt.Errorf("failed to find unique name for tool: %s", name)
+
+	default:
+		return fmt.Errorf("unknown namesake strategy: %s", strategy)
 	}
 }
 
@@ -104,7 +166,7 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 	}
 
 	toolDefs := a.toolsToDefs()
-	maxTurns := a.cfg.MaxTurns
+	maxTurns := a.cfg.Running.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 20
 	}
@@ -320,7 +382,7 @@ func (a *ReactAgent) executeToolsParallel(ctx context.Context, chatID string, to
 }
 
 func (a *ReactAgent) buildMessages(ctx context.Context, chatID string) ([]Message, error) {
-	history, err := a.memory.Load(ctx, chatID, a.cfg.MaxTurns*4) // rough limit
+	history, err := a.memory.Load(ctx, chatID, a.cfg.Running.MaxTurns*4) // rough limit
 	if err != nil {
 		return nil, fmt.Errorf("load history: %w", err)
 	}
@@ -329,10 +391,10 @@ func (a *ReactAgent) buildMessages(ctx context.Context, chatID string) ([]Messag
 	history = SanitizeToolMessages(history)
 
 	// Context window check: compact when estimated tokens exceed 80% of maxInputLength
-	if a.cfg.MaxInputLength > 0 {
+	if a.cfg.Running.MaxInputLength > 0 {
 		sysPrompt := a.getSystemPrompt()
 		estimated := estimateTokens(sysPrompt) + estimateMessagesTokens(history)
-		threshold := int(float64(a.cfg.MaxInputLength) * 0.8)
+		threshold := int(float64(a.cfg.Running.MaxInputLength) * 0.8)
 		if estimated > threshold {
 			logger.L().Info("Context near limit, compacting memory",
 				zap.Int("estimated", estimated),
@@ -341,7 +403,7 @@ func (a *ReactAgent) buildMessages(ctx context.Context, chatID string) ([]Messag
 			if err := a.memory.Compact(ctx, chatID); err != nil {
 				logger.L().Warn("Compact failed", zap.Error(err))
 			} else {
-				history, err = a.memory.Load(ctx, chatID, a.cfg.MaxTurns*4)
+				history, err = a.memory.Load(ctx, chatID, a.cfg.Running.MaxTurns*4)
 				if err != nil {
 					return nil, fmt.Errorf("load history after compact: %w", err)
 				}
