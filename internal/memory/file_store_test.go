@@ -66,4 +66,3 @@ func TestFileStore_HistoryRoundTrip(t *testing.T) {
 		t.Errorf("content mismatch: %v", loaded)
 	}
 }
-

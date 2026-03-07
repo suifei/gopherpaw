@@ -51,6 +51,23 @@ func TestConsoleDisabled(t *testing.T) {
 	}
 }
 
+func TestConsoleWithNilAgent(t *testing.T) {
+	// This should not panic but handle gracefully
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Panic occurred with nil agent: %v", r)
+		}
+	}()
+
+	c := NewConsole(nil, true, nil)
+	if c == nil {
+		t.Error("NewConsole with nil agent should return a non-nil channel")
+	}
+	if c.Name() != "console" {
+		t.Errorf("Name() = %v, want console", c.Name())
+	}
+}
+
 func TestTruncateForConsole(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -77,127 +94,140 @@ func TestTruncateForConsole(t *testing.T) {
 	}
 }
 
-func TestConsoleSend(t *testing.T) {
+// captureStdout safely captures stdout during test execution
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	c := NewConsole(&mockAgentForConsole{}, true, nil)
-	err := c.Send(context.Background(), "user", "Hello", nil)
-
-	w.Close()
-	os.Stdout = oldStdout
-
+	r, w, err := os.Pipe()
 	if err != nil {
-		t.Errorf("Send error = %v", err)
+		t.Fatalf("os.Pipe failed: %v", err)
 	}
 
+	// Atomically replace stdout
+	os.Stdout = w
+
+	// Make sure to restore stdout and capture output
+	defer func() {
+		os.Stdout = oldStdout
+		w.Close()
+	}()
+
+	// Execute the test function
+	fn()
+
+	// Read all output
+	w.Close()
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("io.Copy failed: %v", err)
+	}
 	r.Close()
 
-	if !strings.Contains(buf.String(), "Hello") {
+	return buf.String()
+}
+
+// captureStderr safely captures stderr during test execution
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+
+	// Atomically replace stderr
+	os.Stderr = w
+
+	// Make sure to restore stderr and capture output
+	defer func() {
+		os.Stderr = oldStderr
+		w.Close()
+	}()
+
+	// Execute the test function
+	fn()
+
+	// Read all output
+	w.Close()
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("io.Copy failed: %v", err)
+	}
+	r.Close()
+
+	return buf.String()
+}
+
+func TestConsoleSend(t *testing.T) {
+	var output string
+	output = captureStdout(t, func() {
+		c := NewConsole(&mockAgentForConsole{}, true, nil)
+		err := c.Send(context.Background(), "user", "Hello", nil)
+		if err != nil {
+			t.Errorf("Send error = %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Hello") {
 		t.Errorf("output missing text")
 	}
 }
 
 func TestConsoleSendEmpty(t *testing.T) {
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	c := NewConsole(&mockAgentForConsole{}, true, nil)
-	err := c.Send(context.Background(), "user", "", nil)
-
-	w.Close()
-	os.Stdout = oldStdout
-
-	if err != nil {
-		t.Errorf("Send error = %v", err)
-	}
-	r.Close()
+	captureStdout(t, func() {
+		c := NewConsole(&mockAgentForConsole{}, true, nil)
+		err := c.Send(context.Background(), "user", "", nil)
+		if err != nil {
+			t.Errorf("Send error = %v", err)
+		}
+	})
 }
 
 func TestConsoleSendFile(t *testing.T) {
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	output := captureStdout(t, func() {
+		c := NewConsole(&mockAgentForConsole{}, true, nil)
+		err := c.SendFile(context.Background(), "user", "/tmp/file.pdf", "application/pdf", nil)
+		if err != nil {
+			t.Errorf("SendFile error = %v", err)
+		}
+	})
 
-	c := NewConsole(&mockAgentForConsole{}, true, nil)
-	err := c.SendFile(context.Background(), "user", "/tmp/file.pdf", "application/pdf", nil)
-
-	w.Close()
-	os.Stdout = oldStdout
-
-	if err != nil {
-		t.Errorf("SendFile error = %v", err)
-	}
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	r.Close()
-
-	if !strings.Contains(buf.String(), "file.pdf") {
+	if !strings.Contains(output, "file.pdf") {
 		t.Errorf("output missing filename")
 	}
 }
 
 func TestProgressReporter(t *testing.T) {
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+	output := captureStderr(t, func() {
+		reporter := &consoleProgressReporter{}
+		reporter.OnThinking()
+	})
 
-	reporter := &consoleProgressReporter{}
-	reporter.OnThinking()
-
-	w.Close()
-	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	r.Close()
-
-	if !strings.Contains(buf.String(), "Thinking") {
+	if !strings.Contains(output, "Thinking") {
 		t.Errorf("missing Thinking output")
 	}
 }
 
 func TestProgressReporterToolCall(t *testing.T) {
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+	output := captureStderr(t, func() {
+		reporter := &consoleProgressReporter{}
+		reporter.OnToolCall("read_file", `{"path":"/tmp"}`)
+	})
 
-	reporter := &consoleProgressReporter{}
-	reporter.OnToolCall("read_file", `{"path":"/tmp"}`)
-
-	w.Close()
-	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	r.Close()
-
-	if !strings.Contains(buf.String(), "read_file") {
+	if !strings.Contains(output, "read_file") {
 		t.Errorf("missing tool name")
 	}
 }
 
 func TestProgressReporterToolResult(t *testing.T) {
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
+	output := captureStderr(t, func() {
+		reporter := &consoleProgressReporter{}
+		reporter.OnToolResult("read_file", "content")
+	})
 
-	reporter := &consoleProgressReporter{}
-	reporter.OnToolResult("read_file", "content")
-
-	w.Close()
-	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	r.Close()
-
-	if !strings.Contains(buf.String(), "read_file") {
+	if !strings.Contains(output, "read_file") {
 		t.Errorf("missing tool name in result")
 	}
 }
@@ -225,8 +255,15 @@ func TestProgressReporterFinalReply(t *testing.T) {
 
 func TestConsoleConcurrentSend(t *testing.T) {
 	oldStdout := os.Stdout
-	os.Stdout, _ = os.Open(os.DevNull)
-	defer func() { os.Stdout = oldStdout }()
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("Failed to open /dev/null: %v", err)
+	}
+	defer func() {
+		os.Stdout = oldStdout
+		devNull.Close()
+	}()
+	os.Stdout = devNull
 
 	c := NewConsole(&mockAgentForConsole{}, true, nil)
 	var wg sync.WaitGroup

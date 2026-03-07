@@ -121,22 +121,22 @@ func TestNewMCPClient_Validation(t *testing.T) {
 		{
 			name:    "missing command for stdio",
 			cfg:     config.MCPServerConfig{Transport: "stdio"},
-			wantErr: "command required for stdio transport",
+			wantErr: "command is required for stdio transport",
 		},
 		{
 			name:    "missing url for streamable_http",
 			cfg:     config.MCPServerConfig{Transport: "streamable_http"},
-			wantErr: "url required for streamable_http transport",
+			wantErr: "url is required for streamable_http transport",
 		},
 		{
 			name:    "missing url for sse",
 			cfg:     config.MCPServerConfig{Transport: "sse"},
-			wantErr: "url required for sse transport",
+			wantErr: "url is required for sse transport",
 		},
 		{
 			name:    "unsupported transport",
 			cfg:     config.MCPServerConfig{Transport: "invalid", URL: "http://x"},
-			wantErr: "unsupported transport: invalid",
+			wantErr: "invalid transport type: invalid (supported: stdio, streamable_http, sse)",
 		},
 	}
 	for _, tt := range tests {

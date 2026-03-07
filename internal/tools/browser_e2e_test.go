@@ -1,4 +1,4 @@
-//go:build !nochrome
+//go:build chrome
 
 package tools
 

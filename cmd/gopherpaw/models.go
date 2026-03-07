@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/suifei/gopherpaw/internal/config"
 	"github.com/spf13/cobra"
+	"github.com/suifei/gopherpaw/internal/config"
 )
 
 var modelsCmd = &cobra.Command{

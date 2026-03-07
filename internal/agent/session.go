@@ -11,7 +11,7 @@ type Session struct {
 
 // SessionManager manages sessions by chatID.
 type SessionManager struct {
-	mu      sync.RWMutex
+	mu       sync.RWMutex
 	sessions map[string]*Session
 }
 

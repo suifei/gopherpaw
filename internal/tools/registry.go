@@ -27,10 +27,12 @@ func RegisterBuiltin() []agent.Tool {
 	builtins = []agent.Tool{
 		&TimeTool{},
 		&ShellTool{},
+		&PythonCodeTool{},
 		&ReadFileTool{},
 		&WriteFileTool{},
 		&EditFileTool{},
 		&AppendFileTool{},
+		&ViewTextFileTool{},
 		&GrepSearchTool{},
 		&GlobSearchTool{},
 		&MemorySearchTool{},

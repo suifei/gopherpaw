@@ -324,3 +324,115 @@ func TestAppendFileTool_EmptyContent(t *testing.T) {
 		t.Errorf("File content should be unchanged, got %q", string(data))
 	}
 }
+
+func TestViewTextFileTool_NotExists(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	tool := &ViewTextFileTool{}
+
+	out, err := tool.Execute(context.Background(), `{"file_path":"nonexistent.txt"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "Error") || !strings.Contains(out, "does not exist") {
+		t.Errorf("Expected file not found error, got %q", out)
+	}
+}
+
+func TestViewTextFileTool_NotFile(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	subdir := filepath.Join(dir, "subdir")
+	os.Mkdir(subdir, 0755)
+
+	tool := &ViewTextFileTool{}
+	out, err := tool.Execute(context.Background(), `{"file_path":"subdir"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(out, "Error") || !strings.Contains(out, "not a file") {
+		t.Errorf("Expected not a file error, got %q", out)
+	}
+}
+
+func TestViewTextFileTool_TextFile(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	content := "Hello, World!\nThis is a text file.\nLine 3."
+	fp := filepath.Join(dir, "test.txt")
+	os.WriteFile(fp, []byte(content), 0644)
+
+	tool := &ViewTextFileTool{}
+	out, err := tool.Execute(context.Background(), `{"file_path":"test.txt"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out != content {
+		t.Errorf("Expected %q, got %q", content, out)
+	}
+}
+
+func TestViewTextFileTool_BinaryFile(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+
+	tests := []struct {
+		name     string
+		filename string
+		content  []byte
+	}{
+		{"exe file", "test.exe", []byte{0x4D, 0x5A, 0x90, 0x00}},
+		{"png file", "test.png", []byte{0x89, 0x50, 0x4E, 0x47}},
+		{"pdf file", "test.pdf", []byte{0x25, 0x50, 0x44, 0x46}},
+		{"zip file", "test.zip", []byte{0x50, 0x4B, 0x03, 0x04}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := filepath.Join(dir, tt.filename)
+			os.WriteFile(fp, tt.content, 0644)
+
+			tool := &ViewTextFileTool{}
+			out, err := tool.Execute(context.Background(), `{"file_path":"`+tt.filename+`"}`)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if !strings.Contains(out, "Error") || !strings.Contains(out, "binary file") {
+				t.Errorf("Expected binary file error, got %q", out)
+			}
+		})
+	}
+}
+
+func TestViewTextFileTool_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	fp := filepath.Join(dir, "empty.txt")
+	os.WriteFile(fp, []byte(""), 0644)
+
+	tool := &ViewTextFileTool{}
+	out, err := tool.Execute(context.Background(), `{"file_path":"empty.txt"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out != "" {
+		t.Errorf("Expected empty output, got %q", out)
+	}
+}
+
+func TestViewTextFileTool_RelativePath(t *testing.T) {
+	dir := t.TempDir()
+	SetWorkingDir(dir)
+	content := "test content"
+	fp := filepath.Join(dir, "test.txt")
+	os.WriteFile(fp, []byte(content), 0644)
+
+	tool := &ViewTextFileTool{}
+	out, err := tool.Execute(context.Background(), `{"file_path":"test.txt"}`)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out != content {
+		t.Errorf("Expected %q, got %q", content, out)
+	}
+}

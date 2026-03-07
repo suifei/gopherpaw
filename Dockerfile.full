@@ -1,0 +1,68 @@
+# Build stage
+FROM golang:1.23-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make gcc musl-dev
+
+WORKDIR /build
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary
+RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" -o gopherpaw ./cmd/gopherpaw/
+
+# Final stage - Python runtime
+FROM python:3.11-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    npm \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash
+
+# Create non-root user
+RUN useradd -m -u 1000 gopherpaw
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /build/gopherpaw /usr/local/bin/gopherpaw
+
+# Copy default config
+COPY configs/config.yaml.example /app/configs/config.yaml.example
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs /app/media /app/active_skills /app/customized_skills && \
+    chown -R gopherpaw:gopherpaw /app
+
+# Switch to non-root user
+USER gopherpaw
+
+# Add Bun to PATH
+ENV PATH="/home/gopherpaw/.bun/bin:$PATH"
+
+# Set environment variables
+ENV GOPHERPAW_WORKING_DIR=/app/data \
+    GOPHERPAW_LOG_LEVEL=info \
+    PYTHONUNBUFFERED=1
+
+# Expose default port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Entry point
+ENTRYPOINT ["gopherpaw"]
+CMD ["--help"]

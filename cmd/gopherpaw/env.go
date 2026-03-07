@@ -8,9 +8,9 @@ import (
 	goruntime "runtime"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"github.com/suifei/gopherpaw/internal/config"
 	"github.com/suifei/gopherpaw/internal/runtime"
-	"github.com/spf13/cobra"
 )
 
 var envCmd = &cobra.Command{

@@ -292,8 +292,67 @@ func (t *AppendFileTool) Execute(ctx context.Context, arguments string) (string,
 	return fmt.Sprintf("Appended %d bytes to %s.", len(args.Content), fp), nil
 }
 
-// Ensure interfaces.
+type ViewTextFileTool struct{}
+
+func (t *ViewTextFileTool) Name() string { return "view_text_file" }
+
+func (t *ViewTextFileTool) Description() string {
+	return "View a text file safely. Checks if file is binary and rejects it. Relative paths resolve from working directory."
+}
+
+func (t *ViewTextFileTool) Parameters() any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"file_path": map[string]any{"type": "string", "description": "Path to text file"},
+		},
+		"required": []string{"file_path"},
+	}
+}
+
+type viewTextFileArgs struct {
+	FilePath string `json:"file_path"`
+}
+
+func (t *ViewTextFileTool) Execute(ctx context.Context, arguments string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	var args viewTextFileArgs
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	fp := resolvePath(args.FilePath)
+	if !pathExists(fp) {
+		return fmt.Sprintf("Error: File %s does not exist.", fp), nil
+	}
+	if !isFile(fp) {
+		return fmt.Sprintf("Error: %s is not a file.", fp), nil
+	}
+
+	ext := strings.ToLower(filepath.Ext(fp))
+	binaryExts := map[string]bool{
+		".exe": true, ".bin": true, ".dll": true, ".so": true, ".dylib": true,
+		".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true, ".ico": true,
+		".pdf": true, ".doc": true, ".docx": true, ".xls": true, ".xlsx": true,
+		".ppt": true, ".pptx": true, ".zip": true, ".tar": true, ".gz": true, ".rar": true,
+		".mp3": true, ".mp4": true, ".avi": true, ".mov": true, ".wav": true,
+		".pyc": true, ".class": true, ".jar": true, ".war": true,
+	}
+	if binaryExts[ext] {
+		return fmt.Sprintf("Error: %s is a binary file and cannot be viewed as text.", fp), nil
+	}
+
+	data, err := os.ReadFile(fp)
+	if err != nil {
+		return fmt.Sprintf("Error: Failed to read file: %v", err), nil
+	}
+
+	return string(data), nil
+}
+
 var _ agent.Tool = (*ReadFileTool)(nil)
 var _ agent.Tool = (*WriteFileTool)(nil)
 var _ agent.Tool = (*EditFileTool)(nil)
 var _ agent.Tool = (*AppendFileTool)(nil)
+var _ agent.Tool = (*ViewTextFileTool)(nil)

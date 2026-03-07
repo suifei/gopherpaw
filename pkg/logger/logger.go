@@ -88,7 +88,7 @@ func (z *zapLogger) Debug(args ...any) { z.s.Debug(args...) }
 func (z *zapLogger) Info(args ...any)  { z.s.Info(args...) }
 func (z *zapLogger) Warn(args ...any)  { z.s.Warn(args...) }
 func (z *zapLogger) Error(args ...any) { z.s.Error(args...) }
-func (z *zapLogger) Sync() error      { return z.s.Sync() }
+func (z *zapLogger) Sync() error       { return z.s.Sync() }
 
 // New creates a Logger from Config.
 func New(cfg Config) (Logger, error) {

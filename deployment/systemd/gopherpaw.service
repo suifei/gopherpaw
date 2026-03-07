@@ -1,0 +1,47 @@
+[Unit]
+Description=GopherPaw AI Agent Service
+Documentation=https://github.com/suifei/gopherpaw
+After=network.target
+
+[Service]
+Type=simple
+User=gopherpaw
+Group=gopherpaw
+WorkingDirectory=/var/lib/gopherpaw
+
+; Environment variables
+Environment="GOPHERPAW_LLM_API_KEY=%i"
+EnvironmentFile=/etc/gopherpaw/environment
+
+; Command to run
+ExecStart=/usr/local/bin/gopherpaw -c /etc/gopherpaw/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+
+; Restart policy
+Restart=on-failure
+RestartSec=5
+
+; Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=50%
+
+; Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gopherpaw /var/log/gopherpaw
+
+; Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gopherpaw
+
+; Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

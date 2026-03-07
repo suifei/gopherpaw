@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,6 +85,81 @@ func ParseMCPConfig(jsonBytes []byte) (map[string]config.MCPServerConfig, error)
 	return out, nil
 }
 
+// ValidateConfig validates an MCP server configuration.
+func ValidateConfig(name string, cfg config.MCPServerConfig) error {
+	if name == "" {
+		return fmt.Errorf("client name cannot be empty")
+	}
+
+	// Validate transport type
+	validTransports := map[string]bool{"": true, "stdio": true, "streamable_http": true, "sse": true}
+	if !validTransports[cfg.Transport] {
+		return fmt.Errorf("invalid transport type: %s (supported: stdio, streamable_http, sse)", cfg.Transport)
+	}
+
+	// Validate based on transport type
+	switch cfg.Transport {
+	case "", "stdio":
+		if cfg.Command == "" {
+			return fmt.Errorf("command is required for stdio transport")
+		}
+		// Check if command exists in PATH (best effort)
+		if !strings.Contains(cfg.Command, "/") && !strings.Contains(cfg.Command, "\\") {
+			if _, err := lookPath(cfg.Command); err != nil {
+				return fmt.Errorf("command %q not found in PATH: %w", cfg.Command, err)
+			}
+		}
+	case "streamable_http", "sse":
+		if cfg.URL == "" {
+			return fmt.Errorf("url is required for %s transport", cfg.Transport)
+		}
+		// Validate URL format
+		parsedURL, err := url.Parse(cfg.URL)
+		if err != nil {
+			return fmt.Errorf("invalid url %q: %w", cfg.URL, err)
+		}
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			return fmt.Errorf("url scheme must be http or https, got: %s", parsedURL.Scheme)
+		}
+		if parsedURL.Host == "" {
+			return fmt.Errorf("url must have a host")
+		}
+	}
+
+	return nil
+}
+
+// lookPath searches for an executable in PATH (cross-platform helper).
+func lookPath(file string) (string, error) {
+	return execLookPath(file)
+}
+
+// execLookPath is a variable for testing purposes.
+var execLookPath = func(file string) (string, error) {
+	return "", fmt.Errorf("not implemented")
+}
+
+func init() {
+	// Initialize execLookPath with the actual implementation
+	execLookPath = func(file string) (string, error) {
+		pathEnv := os.Getenv("PATH")
+		if pathEnv == "" {
+			return "", fmt.Errorf("PATH environment variable not set")
+		}
+
+		paths := strings.Split(pathEnv, string(os.PathListSeparator))
+		for _, dir := range paths {
+			fullPath := strings.Join([]string{dir, file}, string(os.PathSeparator))
+			if info, err := os.Stat(fullPath); err == nil {
+				if !info.IsDir() {
+					return fullPath, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("executable file not found in $PATH")
+	}
+}
+
 // MCPClient represents a connection to a single MCP server.
 type MCPClient struct {
 	Name        string
@@ -90,9 +168,18 @@ type MCPClient struct {
 	Enabled     bool
 
 	// Reconnection support
-	reconnectCfg   *ReconnectConfig
-	reconnectCount int
-	stopReconnect  chan struct{}
+	reconnectCfg    *ReconnectConfig
+	reconnectCount  int
+	stopReconnect   chan struct{}
+	stopHealthCheck chan struct{}
+
+	// RebuildInfo stores original config for client reconstruction
+	rebuildInfo config.MCPServerConfig
+
+	// Error recovery enhancements
+	circuitBreaker *CircuitBreaker
+	lastError      error
+	errorCount     int
 }
 
 // ReconnectConfig holds reconnection settings.
@@ -101,65 +188,286 @@ type ReconnectConfig struct {
 	MaxRetries   int           // Max retry attempts (0 = infinite)
 	InitialDelay time.Duration // Initial reconnect delay
 	MaxDelay     time.Duration // Maximum reconnect delay
+
+	// Error recovery enhancements
+	HealthCheckInterval time.Duration         // Interval for health checks
+	HealthCheckTimeout  time.Duration         // Timeout for health check requests
+	CircuitBreaker      *CircuitBreakerConfig // Circuit breaker configuration
+}
+
+// CircuitBreakerConfig holds circuit breaker settings.
+type CircuitBreakerConfig struct {
+	Enabled          bool          // Enable circuit breaker
+	FailureThreshold int           // Number of failures before opening circuit
+	SuccessThreshold int           // Number of successes before closing circuit
+	Timeout          time.Duration // Time to wait before attempting to close circuit
+}
+
+// DefaultCircuitBreakerConfig returns default circuit breaker settings.
+func DefaultCircuitBreakerConfig() *CircuitBreakerConfig {
+	return &CircuitBreakerConfig{
+		Enabled:          true,
+		FailureThreshold: 5,
+		SuccessThreshold: 2,
+		Timeout:          30 * time.Second,
+	}
 }
 
 // DefaultReconnectConfig returns default reconnection settings.
 func DefaultReconnectConfig() *ReconnectConfig {
 	return &ReconnectConfig{
-		Enabled:      true,
-		MaxRetries:   5,
-		InitialDelay: 1 * time.Second,
-		MaxDelay:     30 * time.Second,
+		Enabled:             true,
+		MaxRetries:          5,
+		InitialDelay:        1 * time.Second,
+		MaxDelay:            30 * time.Second,
+		HealthCheckInterval: 30 * time.Second,
+		HealthCheckTimeout:  5 * time.Second,
+		CircuitBreaker:      DefaultCircuitBreakerConfig(),
 	}
+}
+
+// CircuitBreaker implements the circuit breaker pattern.
+type CircuitBreaker struct {
+	config          *CircuitBreakerConfig
+	failures        int
+	successes       int
+	state           string // "closed", "open", "half-open"
+	lastStateChange time.Time
+	mu              sync.RWMutex
+}
+
+// NewCircuitBreaker creates a new circuit breaker.
+func NewCircuitBreaker(config *CircuitBreakerConfig) *CircuitBreaker {
+	if config == nil {
+		config = DefaultCircuitBreakerConfig()
+	}
+	return &CircuitBreaker{
+		config:          config,
+		state:           "closed",
+		lastStateChange: time.Now(),
+	}
+}
+
+// CanExecute checks if the circuit breaker allows execution.
+func (cb *CircuitBreaker) CanExecute() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if !cb.config.Enabled {
+		return true
+	}
+
+	switch cb.state {
+	case "closed":
+		return true
+	case "open":
+		if time.Since(cb.lastStateChange) > cb.config.Timeout {
+			cb.state = "half-open"
+			cb.successes = 0
+			cb.lastStateChange = time.Now()
+			logger.L().Info("Circuit breaker half-open",
+				zap.String("state", cb.state),
+			)
+			return true
+		}
+		return false
+	case "half-open":
+		return true
+	default:
+		return false
+	}
+}
+
+// RecordSuccess records a successful execution.
+func (cb *CircuitBreaker) RecordSuccess() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if !cb.config.Enabled {
+		return
+	}
+
+	cb.failures = 0
+	cb.successes++
+
+	if cb.state == "half-open" && cb.successes >= cb.config.SuccessThreshold {
+		cb.state = "closed"
+		cb.successes = 0
+		cb.lastStateChange = time.Now()
+		logger.L().Info("Circuit breaker closed",
+			zap.String("state", cb.state),
+		)
+	}
+}
+
+// RecordFailure records a failed execution.
+func (cb *CircuitBreaker) RecordFailure() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if !cb.config.Enabled {
+		return
+	}
+
+	cb.successes = 0
+	cb.failures++
+
+	if cb.state == "half-open" {
+		cb.state = "open"
+		cb.lastStateChange = time.Now()
+		logger.L().Warn("Circuit breaker opened (from half-open)",
+			zap.String("state", cb.state),
+			zap.Int("failures", cb.failures),
+		)
+	} else if cb.state == "closed" && cb.failures >= cb.config.FailureThreshold {
+		cb.state = "open"
+		cb.lastStateChange = time.Now()
+		logger.L().Warn("Circuit breaker opened",
+			zap.String("state", cb.state),
+			zap.Int("failures", cb.failures),
+		)
+	}
+}
+
+// GetState returns the current circuit breaker state.
+func (cb *CircuitBreaker) GetState() string {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state
 }
 
 // NewMCPClient creates a new MCP client from config.
 func NewMCPClient(name string, cfg config.MCPServerConfig) (*MCPClient, error) {
+	// Validate configuration
+	if err := ValidateConfig(name, cfg); err != nil {
+		return nil, err
+	}
+
 	enabled := cfg.Enabled == nil || *cfg.Enabled
 
 	var t Transport
 	switch cfg.Transport {
 	case "", "stdio":
-		if cfg.Command == "" {
-			return nil, fmt.Errorf("command required for stdio transport")
-		}
 		t = NewStdioTransport(cfg)
 	case "streamable_http":
-		if cfg.URL == "" {
-			return nil, fmt.Errorf("url required for streamable_http transport")
-		}
 		t = NewHTTPTransport(cfg)
 	case "sse":
-		if cfg.URL == "" {
-			return nil, fmt.Errorf("url required for sse transport")
-		}
 		t = NewSSETransport(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported transport: %s", cfg.Transport)
 	}
 
 	return &MCPClient{
-		Name:           name,
-		Description:    cfg.Description,
-		Transport:      t,
-		Enabled:        enabled,
-		reconnectCfg:   DefaultReconnectConfig(),
-		reconnectCount: 0,
-		stopReconnect:  make(chan struct{}),
+		Name:            name,
+		Description:     cfg.Description,
+		Transport:       t,
+		Enabled:         enabled,
+		reconnectCfg:    DefaultReconnectConfig(),
+		reconnectCount:  0,
+		stopReconnect:   make(chan struct{}),
+		stopHealthCheck: make(chan struct{}),
+		rebuildInfo:     cfg,
+		circuitBreaker:  NewCircuitBreaker(DefaultReconnectConfig().CircuitBreaker),
+		errorCount:      0,
 	}, nil
 }
 
 // StartWithReconnect starts the client with auto-reconnection support.
 func (c *MCPClient) StartWithReconnect(ctx context.Context) error {
 	if err := c.Transport.Start(ctx); err != nil {
+		c.recordError(err)
 		return err
 	}
 
+	c.recordSuccess()
+
 	if c.reconnectCfg != nil && c.reconnectCfg.Enabled {
 		go c.reconnectLoop(ctx)
+		if c.reconnectCfg.HealthCheckInterval > 0 {
+			go c.healthCheckLoop(ctx)
+		}
 	}
 
 	return nil
+}
+
+// healthCheckLoop performs periodic health checks.
+func (c *MCPClient) healthCheckLoop(ctx context.Context) {
+	ticker := time.NewTicker(c.reconnectCfg.HealthCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.stopHealthCheck:
+			return
+		case <-ticker.C:
+			if !c.checkHealth(ctx) {
+				c.tryReconnect(ctx)
+			}
+		}
+	}
+}
+
+// checkHealth performs a health check on the client.
+func (c *MCPClient) checkHealth(ctx context.Context) bool {
+	if !c.Transport.IsRunning() {
+		return false
+	}
+
+	// Check circuit breaker
+	if !c.circuitBreaker.CanExecute() {
+		logger.L().Debug("Circuit breaker is open, skipping health check",
+			zap.String("client", c.Name),
+			zap.String("state", c.circuitBreaker.GetState()),
+		)
+		return false
+	}
+
+	// Try to list tools as a health check
+	checkCtx, cancel := context.WithTimeout(ctx, c.reconnectCfg.HealthCheckTimeout)
+	defer cancel()
+
+	req := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      9999,
+		Method:  "ping",
+		Params:  map[string]string{},
+	}
+	var resp struct {
+		Error *jsonRPCError `json:"error,omitempty"`
+	}
+
+	if err := c.Transport.Call(checkCtx, req, &resp); err != nil {
+		c.recordError(err)
+		logger.L().Debug("Health check failed",
+			zap.String("client", c.Name),
+			zap.Error(err),
+		)
+		return false
+	}
+
+	c.recordSuccess()
+	return true
+}
+
+// recordError records an error for circuit breaker.
+func (c *MCPClient) recordError(err error) {
+	c.lastError = err
+	c.errorCount++
+	if c.circuitBreaker != nil {
+		c.circuitBreaker.RecordFailure()
+	}
+}
+
+// recordSuccess records a success for circuit breaker.
+func (c *MCPClient) recordSuccess() {
+	c.lastError = nil
+	c.errorCount = 0
+	if c.circuitBreaker != nil {
+		c.circuitBreaker.RecordSuccess()
+	}
 }
 
 // reconnectLoop monitors connection and reconnects on failure.
@@ -183,6 +491,15 @@ func (c *MCPClient) reconnectLoop(ctx context.Context) {
 
 // tryReconnect attempts to reconnect with exponential backoff.
 func (c *MCPClient) tryReconnect(ctx context.Context) {
+	// Check circuit breaker
+	if !c.circuitBreaker.CanExecute() {
+		logger.L().Debug("Circuit breaker is open, skipping reconnect",
+			zap.String("client", c.Name),
+			zap.String("state", c.circuitBreaker.GetState()),
+		)
+		return
+	}
+
 	if c.reconnectCfg.MaxRetries > 0 && c.reconnectCount >= c.reconnectCfg.MaxRetries {
 		logger.L().Warn("MCP client max retries reached",
 			zap.String("client", c.Name),
@@ -198,20 +515,24 @@ func (c *MCPClient) tryReconnect(ctx context.Context) {
 		zap.String("client", c.Name),
 		zap.Int("attempt", c.reconnectCount),
 		zap.Duration("delay", delay),
+		zap.String("circuit_state", c.circuitBreaker.GetState()),
 	)
 
 	time.Sleep(delay)
 
 	if err := c.Transport.Start(ctx); err != nil {
+		c.recordError(err)
 		logger.L().Warn("MCP client reconnect failed",
 			zap.String("client", c.Name),
 			zap.Error(err),
+			zap.Int("error_count", c.errorCount),
 		)
 	} else {
+		c.recordSuccess()
+		c.reconnectCount = 0 // Reset on success
 		logger.L().Info("MCP client reconnected successfully",
 			zap.String("client", c.Name),
 		)
-		c.reconnectCount = 0 // Reset on success
 	}
 }
 
@@ -227,7 +548,13 @@ func (c *MCPClient) calculateBackoff() time.Duration {
 // StopWithReconnect stops the client and reconnection loop.
 func (c *MCPClient) StopWithReconnect() error {
 	close(c.stopReconnect)
+	close(c.stopHealthCheck)
 	return c.Transport.Stop()
+}
+
+// GetRebuildInfo returns the original config for client reconstruction.
+func (c *MCPClient) GetRebuildInfo() config.MCPServerConfig {
+	return c.rebuildInfo
 }
 
 // MCPManager manages multiple MCP clients and provides tools.
@@ -343,27 +670,7 @@ func (m *MCPManager) Reload(ctx context.Context, newConfigs map[string]config.MC
 	m.mu.Lock()
 	current := make(map[string]config.MCPServerConfig)
 	for k, c := range m.clients {
-		// Extract config from client (best effort - we only have partial info)
-		// For accurate comparison, we need to track original configs
-		cfg := config.MCPServerConfig{
-			Enabled: ptr(c.Enabled),
-		}
-		if st, ok := c.Transport.(*StdioTransport); ok {
-			cfg.Transport = "stdio"
-			cfg.Command = st.cmd
-			cfg.Args = st.args
-			cfg.Env = st.env
-			cfg.Cwd = st.cwd
-		} else if ht, ok := c.Transport.(*HTTPTransport); ok {
-			cfg.Transport = "streamable_http"
-			cfg.URL = ht.url
-			cfg.Headers = ht.headers
-		} else if sse, ok := c.Transport.(*SSETransport); ok {
-			cfg.Transport = "sse"
-			cfg.URL = sse.url
-			cfg.Headers = sse.headers
-		}
-		current[k] = cfg
+		current[k] = c.GetRebuildInfo()
 	}
 	m.mu.Unlock()
 

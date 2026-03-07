@@ -88,13 +88,23 @@ func TestWebSearchTool_InvalidJSON(t *testing.T) {
 }
 
 func TestWebSearchTool_QueryTrim(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping web search test in short mode")
+	}
+
 	ws, err := NewWebSearchTool()
 	if err != nil {
 		t.Skipf("Skipping WebSearch tests: %v", err)
 	}
 
-	out, err := ws.Execute(context.Background(), `{"query":"  test  "}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, err := ws.Execute(ctx, `{"query":"  test  "}`)
 	if err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+			t.Skipf("Skipping test due to network timeout: %v", err)
+		}
 		t.Fatalf("Execute: %v", err)
 	}
 
@@ -119,20 +129,23 @@ func TestWebSearchTool_ContextCancellation(t *testing.T) {
 }
 
 func TestWebSearchTool_ResultFormat(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping web search test in short mode")
+	}
+
 	ws, err := NewWebSearchTool()
 	if err != nil {
 		t.Skipf("Skipping WebSearch tests: %v", err)
 	}
 
-	if testing.Short() {
-		t.Skip("skipping web search test in short mode")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	out, err := ws.Execute(ctx, `{"query":"golang","max_results":3}`)
 	if err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+			t.Skipf("Skipping test due to network timeout: %v", err)
+		}
 		t.Fatalf("Execute: %v", err)
 	}
 

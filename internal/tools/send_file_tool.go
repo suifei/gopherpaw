@@ -97,10 +97,6 @@ func detectMIME(path string) string {
 	if ext == "" {
 		return "application/octet-stream"
 	}
-	mt := mime.TypeByExtension(ext)
-	if mt != "" {
-		return mt
-	}
 	ext = strings.ToLower(ext)
 	switch ext {
 	case ".md", ".markdown":
@@ -112,6 +108,10 @@ func detectMIME(path string) string {
 	case ".toml":
 		return "text/toml"
 	default:
+		mt := mime.TypeByExtension(ext)
+		if mt != "" {
+			return mt
+		}
 		return "application/octet-stream"
 	}
 }

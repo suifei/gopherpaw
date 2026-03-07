@@ -315,3 +315,75 @@ func TestBuiltinToolsMetadata(t *testing.T) {
 		})
 	}
 }
+
+// TestBuiltinToolsMetadataQuality 测试所有内置工具的元数据质量
+func TestBuiltinToolsMetadataQuality(t *testing.T) {
+	tools := RegisterBuiltin()
+
+	for _, tool := range tools {
+		t.Run(tool.Name(), func(t *testing.T) {
+			// 检查名称格式
+			name := tool.Name()
+			if name == "" {
+				t.Error("Tool name is empty")
+				return
+			}
+
+			// 检查描述质量
+			desc := tool.Description()
+			if desc == "" {
+				t.Logf("Warning: Tool %s has empty description", name)
+			} else if len(desc) < 20 {
+				t.Logf("Warning: Tool %s description might be too short: %q", name, desc)
+			}
+
+			// 检查参数定义质量
+			params := tool.Parameters()
+			if params == nil {
+				t.Errorf("Tool %s has nil parameters", name)
+				return
+			}
+
+			// 验证参数定义格式
+			paramsMap, ok := params.(map[string]any)
+			if !ok {
+				t.Errorf("Tool %s parameters should be map[string]any, got %T", name, params)
+				return
+			}
+
+			// 检查必需字段
+			if paramsMap["type"] == nil {
+				t.Errorf("Tool %s parameters missing 'type' field", name)
+			}
+
+			if paramsMap["properties"] == nil {
+				t.Errorf("Tool %s parameters missing 'properties' field", name)
+			} else {
+				// 检查每个属性是否有描述
+				props, ok := paramsMap["properties"].(map[string]any)
+				if !ok {
+					t.Errorf("Tool %s properties should be map[string]any, got %T", name, paramsMap["properties"])
+					return
+				}
+
+				for propName, propValue := range props {
+					prop, ok := propValue.(map[string]any)
+					if !ok {
+						t.Errorf("Tool %s property %s should be map[string]any, got %T", name, propName, propValue)
+						continue
+					}
+
+					// 每个属性应该有 type
+					if prop["type"] == nil {
+						t.Errorf("Tool %s property %s missing 'type' field", name, propName)
+					}
+
+					// 每个属性应该有 description
+					if prop["description"] == nil {
+						t.Logf("Warning: Tool %s property %s missing 'description' field", name, propName)
+					}
+				}
+			}
+		})
+	}
+}

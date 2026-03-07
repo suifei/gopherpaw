@@ -7,7 +7,7 @@ import (
 
 func TestBuildEnvContext_AllFields(t *testing.T) {
 	ctx := BuildEnvContext("session123", "user456", "telegram", "/home/work")
-	
+
 	if ctx == "" {
 		t.Error("expected non-empty context")
 	}
@@ -30,7 +30,7 @@ func TestBuildEnvContext_AllFields(t *testing.T) {
 
 func TestBuildEnvContext_SomeFields(t *testing.T) {
 	ctx := BuildEnvContext("session123", "", "console", "")
-	
+
 	if ctx == "" {
 		t.Error("expected non-empty context")
 	}
@@ -47,7 +47,7 @@ func TestBuildEnvContext_SomeFields(t *testing.T) {
 
 func TestBuildEnvContext_NoFields(t *testing.T) {
 	ctx := BuildEnvContext("", "", "", "")
-	
+
 	if ctx != "" {
 		t.Errorf("expected empty context, got: %q", ctx)
 	}
@@ -55,7 +55,7 @@ func TestBuildEnvContext_NoFields(t *testing.T) {
 
 func TestBuildEnvContext_Format(t *testing.T) {
 	ctx := BuildEnvContext("s1", "u1", "c1", "w1")
-	
+
 	// Check format
 	lines := strings.Split(ctx, "\n")
 	if len(lines) < 4 {

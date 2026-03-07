@@ -15,8 +15,8 @@ import (
 // EmbeddingClient calls external Embedding API (OpenAI-compatible).
 type EmbeddingClient struct {
 	client *openai.Client
-	cfg   config.MemoryConfig
-	cache *embeddingCache
+	cfg    config.MemoryConfig
+	cache  *embeddingCache
 }
 
 // embeddingCache is a simple LRU cache for embeddings.

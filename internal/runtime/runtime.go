@@ -21,11 +21,11 @@ type Manager struct {
 
 // Status represents the status of a runtime environment.
 type Status struct {
-	Name     string `json:"name"`
-	Ready    bool   `json:"ready"`
-	Path     string `json:"path"`
-	Version  string `json:"version"`
-	Error    string `json:"error,omitempty"`
+	Name     string   `json:"name"`
+	Ready    bool     `json:"ready"`
+	Path     string   `json:"path"`
+	Version  string   `json:"version"`
+	Error    string   `json:"error,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }
 

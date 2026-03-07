@@ -10,22 +10,32 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Config is the root configuration structure.
 type Config struct {
-	Server     ServerConfig    `mapstructure:"server" yaml:"server"`
-	Agent      AgentConfig     `mapstructure:"agent" yaml:"agent"`
-	LLM        LLMConfig       `mapstructure:"llm" yaml:"llm"`
-	Memory     MemoryConfig    `mapstructure:"memory" yaml:"memory"`
-	Channels   ChannelsConfig  `mapstructure:"channels" yaml:"channels"`
-	Scheduler  SchedulerConfig `mapstructure:"scheduler" yaml:"scheduler"`
-	Log        LogConfig       `mapstructure:"log" yaml:"log"`
-	Skills     SkillsConfig    `mapstructure:"skills" yaml:"skills"`
-	Runtime    RuntimeConfig   `mapstructure:"runtime" yaml:"runtime"`
-	MCP        MCPConfig       `mapstructure:"mcp" yaml:"mcp"`
-	WorkingDir string          `mapstructure:"working_dir" yaml:"working_dir"`
-	MediaDir   string          `mapstructure:"media_dir" yaml:"media_dir"`
+	Server          ServerConfig        `mapstructure:"server" yaml:"server"`
+	Agent           AgentConfig         `mapstructure:"agent" yaml:"agent"`
+	LLM             LLMConfig           `mapstructure:"llm" yaml:"llm"`
+	Memory          MemoryConfig        `mapstructure:"memory" yaml:"memory"`
+	Channels        ChannelsConfig      `mapstructure:"channels" yaml:"channels"`
+	Scheduler       SchedulerConfig     `mapstructure:"scheduler" yaml:"scheduler"`
+	Log             LogConfig           `mapstructure:"log" yaml:"log"`
+	Skills          SkillsConfig        `mapstructure:"skills" yaml:"skills"`
+	Runtime         RuntimeConfig       `mapstructure:"runtime" yaml:"runtime"`
+	MCP             MCPConfig           `mapstructure:"mcp" yaml:"mcp"`
+	WorkingDir      string              `mapstructure:"working_dir" yaml:"working_dir"`
+	MediaDir        string              `mapstructure:"media_dir" yaml:"media_dir"`
+	ShowToolDetails bool                `mapstructure:"show_tool_details" yaml:"show_tool_details"`
+	LastDispatch    *LastDispatchConfig `mapstructure:"last_dispatch" yaml:"last_dispatch,omitempty"`
+}
+
+// LastDispatchConfig holds the last dispatch target configuration for session persistence.
+type LastDispatchConfig struct {
+	Channel   string `mapstructure:"channel" yaml:"channel"`
+	UserID    string `mapstructure:"user_id" yaml:"user_id"`
+	SessionID string `mapstructure:"session_id" yaml:"session_id"`
 }
 
 // RuntimeConfig holds runtime environment settings for Python and Node.js.
@@ -210,10 +220,11 @@ type FeishuConfig struct {
 
 // QQConfig holds QQ channel settings.
 type QQConfig struct {
-	Enabled      bool   `mapstructure:"enabled" yaml:"enabled"`
-	BotPrefix    string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
-	AppID        string `mapstructure:"app_id" yaml:"app_id"`
-	ClientSecret string `mapstructure:"client_secret" yaml:"client_secret"`
+	Enabled            bool   `mapstructure:"enabled" yaml:"enabled"`
+	BotPrefix          string `mapstructure:"bot_prefix" yaml:"bot_prefix"`
+	AppID              string `mapstructure:"app_id" yaml:"app_id"`
+	ClientSecret       string `mapstructure:"client_secret" yaml:"client_secret"`
+	FilterToolMessages bool   `mapstructure:"filter_tool_messages" yaml:"filter_tool_messages"`
 }
 
 // SchedulerConfig holds scheduler settings.
@@ -389,6 +400,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("runtime.node.bun_path", "")
 	v.SetDefault("runtime.node.node_path", "")
 	v.SetDefault("runtime.node.auto_install", true)
+	// UI defaults
+	v.SetDefault("show_tool_details", true)
 }
 
 func defaultConfig() *Config {
@@ -756,4 +769,57 @@ func EnsureSecretDir() error {
 // chmodBestEffort sets file permissions, ignoring errors on unsupported systems.
 func chmodBestEffort(path string, mode os.FileMode) {
 	os.Chmod(path, mode)
+}
+
+// SaveLastDispatch updates the last dispatch configuration and saves it to the config file.
+// If configPath is empty, it uses the default config path.
+func SaveLastDispatch(cfg *Config, channel, userID, sessionID, configPath string) error {
+	cfg.LastDispatch = &LastDispatchConfig{
+		Channel:   channel,
+		UserID:    userID,
+		SessionID: sessionID,
+	}
+	return SaveConfig(cfg, configPath)
+}
+
+// LoadLastDispatch retrieves the last dispatch configuration.
+// Returns empty strings if not set.
+func LoadLastDispatch(cfg *Config) (channel, userID, sessionID string) {
+	if cfg.LastDispatch == nil {
+		return "", "", ""
+	}
+	return cfg.LastDispatch.Channel, cfg.LastDispatch.UserID, cfg.LastDispatch.SessionID
+}
+
+// SaveConfig saves the configuration to a YAML file at the given path.
+// If path is empty, it uses the default config path (~/.gopherpaw/config.yaml).
+func SaveConfig(cfg *Config, path string) error {
+	if path == "" {
+		workingDir := ResolveWorkingDir("")
+		path = filepath.Join(workingDir, "config.yaml")
+	}
+
+	// Ensure directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	// Marshal to YAML
+	data, err := yamlMarshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	// Write file
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	return nil
+}
+
+// yamlMarshal marshals config to YAML using yaml.v3
+func yamlMarshal(cfg *Config) ([]byte, error) {
+	return yaml.Marshal(cfg)
 }
