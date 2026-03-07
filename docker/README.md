@@ -128,8 +128,14 @@ docker-compose -f docker/docker-compose.yml down -v
 ### 调试命令
 
 ```bash
+# 检查健康状态
+docker inspect gopherpaw-desktop --format='{{.State.Health.Status}}'
+
 # 检查 VNC 进程
-docker exec gopherpaw-desktop pgrep -a Xvnc
+docker exec gopherpaw-desktop pgrep -a Xtigervnc
+
+# 检查 X11 socket
+docker exec gopherpaw-desktop ls -la /tmp/.X11-unix/
 
 # 检查桌面环境
 docker exec gopherpaw-desktop pgrep -a xfce
@@ -270,6 +276,105 @@ docker exec gopherpaw-desktop cat /app/logs/gopherpaw.log
 
 ---
 
+### 问题 6: 健康检查失败
+
+**症状：** `docker ps` 显示容器状态为 `(unhealthy)`
+
+**诊断步骤：**
+
+```bash
+# 1. 检查健康检查状态
+docker inspect gopherpaw-desktop --format='{{.State.Health.Status}}'
+
+# 2. 查看健康检查日志
+docker inspect gopherpaw-desktop --format='{{range .State.Health.Log}}{{.Start}} - Exit: {{.ExitCode}}, Output: "{{.Output}}"{{println}}{{end}}'
+
+# 3. 手动测试健康检查命令
+docker exec gopherpaw-desktop test -S /tmp/.X11-unix/X1 && echo "OK" || echo "Failed"
+
+# 4. 检查 VNC Server 进程
+docker exec gopherpaw-desktop pgrep -x Xtigervnc
+
+# 5. 检查 X11 socket 文件
+docker exec gopherpaw-desktop ls -la /tmp/.X11-unix/
+
+# 6. 查看容器日志
+docker logs --tail 100 gopherpaw-desktop
+```
+
+**常见原因与解决方案：**
+
+1. **VNC Server 未启动**
+   ```bash
+   # 检查 VNC 日志
+   docker exec gopherpaw-desktop cat ~/.vnc/*.log
+   
+   # 如果看到 "Session startup ... exited too early"
+   # 说明 XFCE 配置有问题，检查 ~/.xsession 文件
+   docker exec gopherpaw-desktop cat ~/.xsession
+   ```
+
+2. **X11 socket 不存在**
+   ```bash
+   # 检查 X11 socket
+   docker exec gopherpaw-desktop test -S /tmp/.X11-unix/X1
+   
+   # 如果不存在，重启容器
+   docker-compose -f docker/docker-compose.yml restart
+   ```
+
+3. **启动时间不足**
+   ```bash
+   # 健康检查 start_period 默认 60 秒
+   # 如果容器启动较慢，可以增加 start_period
+   
+   # 编辑 docker-compose.yml
+   healthcheck:
+     start_period: 90s  # 增加到 90 秒
+   ```
+
+4. **权限问题**
+   ```bash
+   # 检查 .vnc 目录权限
+   docker exec gopherpaw-desktop ls -la ~/.vnc/
+   
+   # 应该显示：
+   # drwxr-xr-x  gopherpaw:gopherpaw  .vnc
+   # -rw-------   gopherpaw:gopherpaw  passwd
+   ```
+
+5. **配置文件问题**
+   ```bash
+   # 确保 docker-compose.yml 中的健康检查配置正确
+   grep -A 5 "healthcheck:" docker/docker-compose.yml
+   
+   # 应该是：
+   # test: ["CMD-SHELL", "test -S /tmp/.X11-unix/X1 || exit 1"]
+   ```
+
+**完全重置：**
+
+如果上述方法都无效，完全重置容器：
+
+```bash
+# 停止并删除容器
+docker-compose -f docker/docker-compose.yml down
+
+# 删除旧镜像（可选）
+docker rmi gopherpaw-desktop:latest
+
+# 重新构建
+docker-compose -f docker/docker-compose.yml build
+
+# 启动
+docker-compose -f docker/docker-compose.yml up -d
+
+# 等待 70 秒后检查
+sleep 70 && docker ps | grep gopherpaw
+```
+
+---
+
 ## 🔐 安全建议
 
 ### 生产环境必做
@@ -407,5 +512,5 @@ services:
 
 ---
 
-**最后更新**: 2026-03-07  
+**最后更新**: 2026-03-08  
 **版本**: v0.1.0-alpha

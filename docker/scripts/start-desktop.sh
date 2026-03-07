@@ -73,21 +73,41 @@ log_info ""
 
 # 1. 配置 VNC 密码
 log_info "[1/5] Configuring VNC password..."
-mkdir -p ~/.vnc
-echo "$VNC_PASSWORD" | vncpasswd -f > ~/.vnc/passwd
-chmod 600 ~/.vnc/passwd
-log_info "VNC password configured"
+
+# 仅在密码不是默认值或密码文件不存在时重新生成
+if [ "$VNC_PASSWORD" != "gopherpaw" ] || [ ! -f ~/.vnc/passwd ]; then
+    mkdir -p ~/.vnc
+    
+    # 检查 vncpasswd 命令位置
+    VNCPASSWD=""
+    if [ -f /usr/bin/vncpasswd ]; then
+        VNCPASSWD="/usr/bin/vncpasswd"
+    elif [ -f /usr/bin/tigervncpasswd ]; then
+        VNCPASSWD="/usr/bin/tigervncpasswd"
+    else
+        log_error "vncpasswd command not found!"
+        exit 1
+    fi
+    
+    # 创建密码文件
+    echo "$VNC_PASSWORD" | $VNCPASSWD -f > ~/.vnc/passwd
+    chmod 600 ~/.vnc/passwd
+    log_info "VNC password configured using $VNCPASSWD"
+else
+    log_info "Using pre-configured VNC password"
+fi
 log_info ""
 
 # 2. 启动 VNC Server
 log_info "[2/5] Starting VNC Server..."
+
+# 启动 VNC Server（使用密码认证）
 vncserver $DISPLAY \
     -geometry $VNC_GEOMETRY \
     -depth $VNC_DEPTH \
-    -SecurityTypes TLSPlain \
-    -PlainUsers $(whoami) \
     -rfbport $VNC_PORT \
-    -localhost no
+    -localhost no \
+    -PasswordFile ~/.vnc/passwd 2>&1
 
 if [ $? -ne 0 ]; then
     log_error "Failed to start VNC server"
@@ -97,29 +117,19 @@ fi
 log_info "VNC Server started on display $DISPLAY (port $VNC_PORT)"
 log_info ""
 
-# 3. 启动 XFCE 桌面
-log_info "[3/5] Starting XFCE Desktop..."
+# 3. 配置 XFCE 桌面会话
+log_info "[3/5] Configuring XFCE Desktop session..."
 export DISPLAY=$DISPLAY
 
-# 配置 XFCE 会话
+# 配置 XFCE 会话（VNC 会自动执行 ~/.xsession）
 cat > ~/.xsession <<'EOF'
 #!/bin/bash
-xrdb ~/.Xresources
-startxfce4 &
+xrdb ~/.Xresources 2>/dev/null || true
+startxfce4
 EOF
 chmod +x ~/.xsession
 
-# 启动 XFCE（在后台）
-startxfce4 > ~/.vnc/xfce4.log 2>&1 &
-
-sleep 2
-
-if pgrep -x xfce4-session > /dev/null; then
-    log_info "XFCE Desktop started successfully"
-else
-    log_warn "XFCE Desktop may not have started properly"
-fi
-
+log_info "XFCE Desktop session configured"
 log_info ""
 
 # 4. 启动 noVNC 代理

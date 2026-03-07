@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # VNC 服务器
     tigervnc-standalone-server \
     tigervnc-common \
+    tigervnc-tools \
     \
     # noVNC (Web VNC 客户端)
     novnc \
@@ -69,11 +70,14 @@ RUN ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && dpkg-reconfigure -f noninte
 RUN useradd -m -u 1000 -s /bin/bash gopherpaw && \
     echo "gopherpaw ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# 设置 VNC 密码
+# 创建 VNC 目录（密码将在启动脚本中设置）
 RUN mkdir -p /home/gopherpaw/.vnc && \
-    echo $VNC_PASSWORD | vncpasswd -f > /home/gopherpaw/.vnc/passwd && \
-    chmod 600 /home/gopherpaw/.vnc/passwd && \
     chown -R gopherpaw:gopherpaw /home/gopherpaw/.vnc
+
+# 预生成默认 VNC 密码文件（运行时可通过 VNC_PASSWORD 环境变量覆盖）
+RUN echo "gopherpaw" | vncpasswd -f > /home/gopherpaw/.vnc/passwd && \
+    chmod 600 /home/gopherpaw/.vnc/passwd && \
+    chown gopherpaw:gopherpaw /home/gopherpaw/.vnc/passwd
 
 # 安装 GopherPaw（需要先构建）
 # 假设 gopherpaw 二进制文件在项目根目录
@@ -102,9 +106,9 @@ WORKDIR /app
 # 8081: GopherPaw HTTP API
 EXPOSE 6080 5901 8081
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD pgrep -x Xvnc || exit 1
+# 健康检查（检查 VNC X11 socket 是否存在）
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+    CMD test -S /tmp/.X11-unix/X1 || exit 1
 
 # 启动命令
 ENTRYPOINT ["/usr/local/bin/start-desktop.sh"]

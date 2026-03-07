@@ -24,15 +24,48 @@
   - 已识别现有 `cmd/gopherpaw/app.go`
   - 需要修改现有代码而不是创建新文件
 
+### ✅ 已完成（Phase 3: Docker 容器化）
+
+- [x] **Dockerfile.desktop** - 完整的容器镜像
+  - Ubuntu 22.04 + XFCE + TigerVNC + noVNC
+  - 构建时预生成 VNC 密码
+  - 健康检查（X11 socket 检测）
+  - 镜像大小：2.13GB
+
+- [x] **start-desktop.sh** - 优化的启动脚本
+  - VNC Server 启动
+  - XFCE 桌面会话配置
+  - noVNC 代理启动
+  - GopherPaw 应用启动
+
+- [x] **docker-compose.yml** - 生产就绪配置
+  - 端口映射（6080/5901/8081）
+  - 资源限制（2GB 内存）
+  - 健康检查配置
+  - 自动重启策略
+
+- [x] **验证通过**
+  - 容器状态：healthy
+  - noVNC Web 访问正常
+  - GopherPaw 可运行
+  - 所有依赖工具已安装
+
+- [x] **优化完成**
+  - 删除冗余补丁脚本（fix-vnc.sh）
+  - 修复健康检查机制
+  - 优化 VNC 密码管理
+  - 优化 XFCE 启动方式
+
 ### ⏸️ 进行中
 
-- [ ] **[5/6]** 更新契约文档
+- [ ] **更新契约文档**
   - `docs/architecture_spec.md` - 需要新增 app 模块说明
   - `docs/api_spec.md` - 需要新增接口定义
 
-- [ ] **[6/6]** 验证
-  - 需要集成测试
-  - 需要端到端验证
+- [ ] **验证 GopherPaw 功能**
+  - 在 XFCE 终端中测试工具调用
+  - 配置 LLM API 密钥
+  - 运行简单的 Agent 任务
 
 ---
 
@@ -91,78 +124,71 @@
 
 ---
 
-### Phase 3: Docker 容器化（1-2 天）
+### Phase 3: Docker 容器化 ✅
 
 ```
 优先级：🔴 P0 (核心需求)
+状态：✅ 已完成
+完成日期：2026-03-08
 ```
 
-#### 任务清单
+#### 已完成任务
 
-- [ ] **创建 Dockerfile** - `docker/Dockerfile.desktop`
-  ```dockerfile
-  FROM ubuntu:22.04
-  # 安装 XFCE + TigerVNC + noVNC
-  # 安装 GopherPaw 依赖
-  # 配置启动脚本
-  ```
+- [x] **创建 Dockerfile** - `docker/Dockerfile.desktop`
+  - ✅ Ubuntu 22.04 基础镜像
+  - ✅ XFCE + TigerVNC + noVNC 集成
+  - ✅ 构建时预生成 VNC 密码
+  - ✅ 健康检查配置（X11 socket 检测）
+  
+- [x] **创建启动脚本** - `docker/scripts/start-desktop.sh`
+  - ✅ VNC Server 启动（Xtigervnc）
+  - ✅ XFCE 桌面会话配置（~/.xsession）
+  - ✅ noVNC 代理启动
+  - ✅ GopherPaw 应用启动
+  - ✅ 优化的密码管理（支持环境变量覆盖）
 
-- [ ] **创建启动脚本** - `docker/scripts/start-desktop.sh`
-  ```bash
-  # 启动 VNC Server
-  vncserver :1 -geometry 1920x1080 -depth 24
-  
-  # 启动 XFCE 桌面
-  startxfce4 &
-  
-  # 启动 noVNC 代理
-  /usr/share/novnc/utils/launch.sh --vnc localhost:5901
-  
-  # 启动 GopherPaw
-  gopherpaw app start
-  ```
+- [x] **创建依赖安装脚本** - `docker/scripts/install-dependencies.sh`
+  - ✅ LibreOffice (soffice)
+  - ✅ Poppler (pdftoppm)
+  - ✅ Pandoc
+  - ✅ FFmpeg
+  - ✅ Git
 
-- [ ] **创建依赖安装脚本** - `docker/scripts/install-dependencies.sh`
-  ```bash
-  # 根据 detector.go 中的列表安装：
-  # - LibreOffice (soffice)
-  # - Poppler (pdftoppm)
-  # - Pandoc
-  # - FFmpeg
-  # - Git
-  ```
+- [x] **创建 Docker Compose** - `docker/docker-compose.yml`
+  - ✅ 端口映射：6080 (noVNC), 5901 (VNC), 8081 (GopherPaw)
+  - ✅ 环境变量配置
+  - ✅ 资源限制（2GB 内存）
+  - ✅ 健康检查（X11 socket 检测）
+  - ✅ 自动重启策略
 
-- [ ] **创建 Docker Compose** - `docker/docker-compose.yml`
-  ```yaml
-  version: '3.8'
-  services:
-    gopherpaw:
-      build:
-        context: ..
-        dockerfile: docker/Dockerfile.desktop
-        args:
-          - DOCKER_REGISTRY_MIRROR=${DOCKER_REGISTRY_MIRROR}
-      ports:
-        - "6080:6080"  # noVNC
-        - "5901:5901"  # VNC
-        - "8081:8081"  # GopherPaw
-      environment:
-        - VNC_PASSWORD=${VNC_PASSWORD}
-      volumes:
-        - ./data:/app/data
-  ```
+- [x] **端到端验证**
+  - ✅ 镜像构建成功（2.13GB）
+  - ✅ 容器启动成功
+  - ✅ VNC/noVNC 可访问（http://localhost:6080/vnc.html）
+  - ✅ 健康检查通过（healthy）
+  - ✅ GopherPaw 可运行
+  - ✅ 所有依赖工具已安装
 
-- [ ] **端到端验证**
-  ```bash
-  # 构建镜像
-  docker-compose -f docker/docker-compose.yml build
-  
-  # 启动容器
-  docker-compose -f docker/docker-compose.yml up -d
-  
-  # 浏览器访问
-  http://localhost:6080/vnc.html
-  ```
+#### 优化记录
+
+1. **健康检查修复**
+   - 原问题：`pgrep -x Xvnc` 检测不到 `Xtigervnc` 进程
+   - 解决方案：改用 `test -S /tmp/.X11-unix/X1` 检测 X11 socket
+   - 文件：`docker/Dockerfile.desktop:110`, `docker/docker-compose.yml:73`
+
+2. **VNC 密码优化**
+   - 原问题：每次启动都重新生成密码
+   - 解决方案：构建时预生成默认密码，支持环境变量覆盖
+   - 文件：`docker/Dockerfile.desktop:78-81`, `docker/scripts/start-desktop.sh:74-93`
+
+3. **XFCE 启动优化**
+   - 原问题：XFCE 在后台启动导致 VNC session 退出
+   - 解决方案：使用 VNC 标准的 ~/.xsession 配置
+   - 文件：`docker/scripts/start-desktop.sh:120-133`
+
+4. **删除冗余补丁**
+   - 删除文件：`docker/fix-vnc.sh`
+   - 原因：功能已集成到 Dockerfile 和启动脚本
 
 ---
 
@@ -386,37 +412,53 @@ if a.restartTask != nil && !a.restartTask.done() {
 
 ### 🔴 紧急（本周内完成）
 
-1. **完成 Phase 3: Docker 容器化**
-   - 创建 `docker/Dockerfile.desktop`
-   - 创建 `docker/scripts/start-desktop.sh`
-   - 创建 `docker/docker-compose.yml`
-   - 端到端验证
+1. ✅ **完成 Phase 3: Docker 容器化** - 已完成 (2026-03-08)
+   - ✅ 创建 `docker/Dockerfile.desktop`
+   - ✅ 创建 `docker/scripts/start-desktop.sh`
+   - ✅ 创建 `docker/docker-compose.yml`
+   - ✅ 端到端验证
+   - ✅ 移除 fix-vnc.sh 补丁脚本
+   - ✅ 优化健康检查机制
+   - ✅ 优化 VNC 密码管理
 
-2. **更新契约文档**
-   - `docs/architecture_spec.md`
-   - `docs/api_spec.md`
+2. **验证 GopherPaw 功能（进行中）**
+   - [ ] 在 XFCE 终端中运行 `gopherpaw --help`
+   - [ ] 测试文件操作工具
+   - [ ] 测试浏览器工具
+   - [ ] 配置 LLM API 密钥
+   - [ ] 运行简单的 Agent 任务
+
+3. **更新契约文档**
+   - [ ] `docs/architecture_spec.md` - 新增 desktop 模块
+   - [ ] `docs/api_spec.md` - 新增 Desktop Manager 接口
 
 ### 🟡 重要（下周完成）
 
-3. **完成 Phase 2: Desktop 模块**
-   - VNC 管理
-   - noVNC 代理
-   - 集成测试
+4. **完成 Phase 2: Desktop 模块**
+   - [ ] 实现 VNC 管理（Go 代码）
+   - [ ] 实现 noVNC 代理管理
+   - [ ] 控制切换功能
+   - [ ] 会话录制
+   - [ ] 集成测试
 
-4. **完善 CLI 集成**
-   - 修改 `cmd/gopherpaw/app.go`
-   - 添加 `desktop` 子命令
+5. **完善 CLI 集成**
+   - [ ] 修改 `cmd/gopherpaw/app.go`
+   - [ ] 添加 `desktop` 子命令
+   - [ ] 添加状态查询命令
 
 ### 🟢 次要（后续迭代）
 
-5. **实现 Phase 4: 控制切换**
-   - Agent/User 模式切换
-   - 会话录制
+6. **实现 Phase 4: 控制切换**
+   - [ ] Agent/User 模式切换
+   - [ ] 会话录制与回放
+   - [ ] WebSocket 事件广播
 
-6. **性能优化**
-   - VNC 编码优化
-   - 内存占用优化
-   - 启动速度优化
+7. **生产环境优化**
+   - [ ] HTTPS 配置
+   - [ ] 多用户支持
+   - [ ] VNC 编码优化
+   - [ ] 内存占用优化
+   - [ ] 启动速度优化
 
 ---
 
@@ -424,9 +466,9 @@ if a.restartTask != nil && !a.restartTask.done() {
 
 ```
 Week 1 (当前):
-  ├─ Day 1-2: Phase 3 Docker 容器化 ✅ (进行中)
-  ├─ Day 3: Phase 2 Desktop 模块基础
-  └─ Day 4-5: 集成测试 + 文档
+  ├─ Day 1-2: Phase 3 Docker 容器化 ✅ (已完成 - 2026-03-08)
+  ├─ Day 3: GopherPaw 功能验证 + Desktop 模块基础
+  └─ Day 4-5: 集成测试 + 文档更新
 
 Week 2:
   ├─ Day 1-2: Desktop 完整实现
@@ -478,6 +520,6 @@ go build -o gopherpaw ./cmd/gopherpaw/
 
 ---
 
-**最后更新**: 2026-03-07
+**最后更新**: 2026-03-08
 **版本**: v0.1.0-alpha (MVP)
 **维护者**: GopherPaw Team

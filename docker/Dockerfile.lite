@@ -1,0 +1,59 @@
+# ============================================
+# GopherPaw Desktop Container (Lite Version)
+# 最小化版本 - 仅用于快速测试
+# ============================================
+
+ARG DOCKER_REGISTRY_MIRROR=docker.1ms.run
+
+FROM ${DOCKER_REGISTRY_MIRROR}/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:1
+ENV VNC_PASSWORD=gopherpaw
+ENV TZ=Asia/Shanghai
+
+# 仅安装核心组件（无 LibreOffice、FFmpeg 等）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # 基础工具
+    wget curl ca-certificates locales tzdata \
+    # XFCE 核心（最小化）
+    xfce4 xfce4-terminal \
+    # VNC
+    tigervnc-standalone-server tigervnc-common \
+    # noVNC
+    novnc websockify \
+    # 中文字体
+    fonts-wqy-microhei \
+    && rm -rf /var/lib/apt/lists/*
+
+# 配置语言
+RUN locale-gen zh_CN.UTF-8 && update-locale LANG=zh_CN.UTF-8
+
+# 创建用户
+RUN useradd -m -u 1000 -s /bin/bash gopherpaw && \
+    mkdir -p /home/gopherpaw/.vnc && \
+    echo "gopherpaw" | vncpasswd -f > /home/gopherpaw/.vnc/passwd && \
+    chmod 600 /home/gopherpaw/.vnc/passwd && \
+    chown -R gopherpaw:gopherpaw /home/gopherpaw/.vnc
+
+# 安装 GopherPaw
+COPY gopherpaw /usr/local/bin/gopherpaw
+RUN chmod +x /usr/local/bin/gopherpaw
+
+# 复制启动脚本
+COPY docker/scripts/start-desktop.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/start-desktop.sh
+
+# 创建目录
+RUN mkdir -p /app/data /app/logs /app/configs && \
+    chown -R gopherpaw:gopherpaw /app
+
+USER gopherpaw
+WORKDIR /app
+
+EXPOSE 6080 5901
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD pgrep -x Xvnc || exit 1
+
+ENTRYPOINT ["/usr/local/bin/start-desktop.sh"]

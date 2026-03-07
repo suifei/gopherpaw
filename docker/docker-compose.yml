@@ -70,11 +70,11 @@ services:
     
     # 健康检查
     healthcheck:
-      test: ["CMD", "pgrep", "-x", "Xvnc"]
+      test: ["CMD-SHELL", "test -S /tmp/.X11-unix/X1 || exit 1"]
       interval: 30s
       timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 60s
     
     # 重启策略
     restart: unless-stopped
