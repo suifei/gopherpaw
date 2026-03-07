@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  gopherpaw-desktop:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.desktop
+      args:
+        - DOCKER_REGISTRY_MIRROR=${DOCKER_REGISTRY_MIRROR:-docker.1ms.run}
+    image: gopherpaw-desktop:latest
+    container_name: gopherpaw-desktop
+    
+    environment:
+      # VNC 配置
+      - VNC_PASSWORD=${VNC_PASSWORD:-gopherpaw}
+      - VNC_GEOMETRY=${VNC_GEOMETRY:-1920x1080}
+      - VNC_DEPTH=${VNC_DEPTH:-24}
+      - NOVNC_PORT=${NOVNC_PORT:-6080}
+      - VNC_PORT=${VNC_PORT:-5901}
+      
+      # GopherPaw 配置
+      - GOPHERPAW_LLM_API_KEY=${GOPHERPAW_LLM_API_KEY}
+      - GOPHERPAW_LLM_BASE_URL=${GOPHERPAW_LLM_BASE_URL:-https://api.openai.com/v1}
+      - GOPHERPAW_LOG_LEVEL=${GOPHERPAW_LOG_LEVEL:-info}
+      - GOPHERPAW_WORKING_DIR=/app/data
+      
+      # 系统配置
+      - TZ=${TZ:-Asia/Shanghai}
+      - DISPLAY=:1
+      - LANG=zh_CN.UTF-8
+      - LANGUAGE=zh_CN:zh
+    
+    ports:
+      # noVNC Web 界面
+      - "${NOVNC_PORT:-6080}:6080"
+      
+      # VNC 原生端口（可选，用于 VNC 客户端）
+      # - "${VNC_PORT:-5901}:5901"
+      
+      # GopherPaw HTTP API（TODO）
+      # - "${GOPHERPAW_PORT:-8081}:8081"
+    
+    volumes:
+      # 数据持久化
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs:ro
+      
+      # 用户文件（可选）
+      # - ./user-files:/app/user-files
+    
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    
+    # 安全配置
+    security_opt:
+      - no-new-privileges:true
+    
+    # 临时文件系统（性能优化）
+    tmpfs:
+      - /tmp:size=200M,mode=1777
+      - /var/tmp:size=100M,mode=1777
+    
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "Xvnc"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    
+    # 重启策略
+    restart: unless-stopped
+    
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# 网络配置（可选）
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+# 卷定义（可选，用于命名卷）
+# volumes:
+#   gopherpaw-data:
+#     driver: local

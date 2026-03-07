@@ -1,0 +1,111 @@
+# ============================================
+# GopherPaw Desktop Container
+# Ubuntu + XFCE + TigerVNC + noVNC
+# ============================================
+
+# 镜像代理参数
+ARG DOCKER_REGISTRY_MIRROR=docker.1ms.run
+
+FROM ${DOCKER_REGISTRY_MIRROR}/ubuntu:22.04
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:1
+ENV VNC_PASSWORD=gopherpaw
+ENV VNCGEOMETRY=1920x1080
+ENV VNCDepth=24
+ENV LANGUAGE=zh_CN.UTF-8
+ENV TZ=Asia/Shanghai
+
+# 安装基础系统 + XFCE + TigerVNC + noVNC + 开发工具
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # 基础工具
+    wget \
+    curl \
+    gnupg \
+    lsb-release \
+    ca-certificates \
+    locales \
+    tzdata \
+    \
+    # XFCE 桌面环境（轻量级）
+    xfce4 \
+    xfce4-goodies \
+    xfce4-terminal \
+    \
+    # VNC 服务器
+    tigervnc-standalone-server \
+    tigervnc-common \
+    \
+    # noVNC (Web VNC 客户端)
+    novnc \
+    websockify \
+    \
+    # 中文字体
+    fonts-wqy-microhei \
+    fonts-wqy-zenhei \
+    \
+    # 开发工具（detector.go 中的依赖）
+    libreoffice \
+    poppler-utils \
+    pandoc \
+    ffmpeg \
+    git \
+    \
+    # 其他实用工具
+    x11-utils \
+    x11-xserver-utils \
+    dbus-x11 \
+    \
+    && rm -rf /var/lib/apt/lists/*
+
+# 配置语言环境
+RUN locale-gen $LANGUAGE && update-locale LANG=$LANGUAGE
+
+# 配置时区
+RUN ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && dpkg-reconfigure -f noninteractive tzdata
+
+# 创建非 root 用户
+RUN useradd -m -u 1000 -s /bin/bash gopherpaw && \
+    echo "gopherpaw ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# 设置 VNC 密码
+RUN mkdir -p /home/gopherpaw/.vnc && \
+    echo $VNC_PASSWORD | vncpasswd -f > /home/gopherpaw/.vnc/passwd && \
+    chmod 600 /home/gopherpaw/.vnc/passwd && \
+    chown -R gopherpaw:gopherpaw /home/gopherpaw/.vnc
+
+# 安装 GopherPaw（需要先构建）
+# 假设 gopherpaw 二进制文件在项目根目录
+COPY --chown=gopherpaw:gopherpaw gopherpaw /usr/local/bin/gopherpaw
+RUN chmod +x /usr/local/bin/gopherpaw
+
+# 复制配置文件示例
+COPY --chown=gopherpaw:gopherpaw configs/config.yaml.example /app/configs/config.yaml.example
+
+# 复制启动脚本
+COPY docker/scripts/start-desktop.sh /usr/local/bin/start-desktop.sh
+COPY docker/scripts/install-dependencies.sh /usr/local/bin/install-dependencies.sh
+RUN chmod +x /usr/local/bin/*.sh
+
+# 创建必要目录
+RUN mkdir -p /app/data /app/logs /app/configs && \
+    chown -R gopherpaw:gopherpaw /app
+
+# 切换到非 root 用户
+USER gopherpaw
+WORKDIR /app
+
+# 暴露端口
+# 6080: noVNC Web 界面
+# 5901: VNC 原生端口
+# 8081: GopherPaw HTTP API
+EXPOSE 6080 5901 8081
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD pgrep -x Xvnc || exit 1
+
+# 启动命令
+ENTRYPOINT ["/usr/local/bin/start-desktop.sh"]
+CMD ["gopherpaw", "app", "start"]
