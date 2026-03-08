@@ -290,5 +290,83 @@ func TestConsoleStopWithoutStart(t *testing.T) {
 	}
 }
 
+// TestConsoleInitialTasks 测试初始任务功能
+func TestConsoleInitialTasks(t *testing.T) {
+	taskExecuted := false
+	taskContent := ""
+
+	mockAg := &mockAgentForConsole{
+		runFunc: func(ctx context.Context, chatID, text string) (string, error) {
+			taskExecuted = true
+			taskContent = text
+			return "response for " + text, nil
+		},
+	}
+
+	c := NewConsole(mockAg, true, nil)
+	c.SetInitialTasks([]string{"hello world"})
+	c.SetRunOnce(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// 启动 channel（会在 goroutine 中执行初始任务）
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("Start error = %v", err)
+	}
+
+	// 等待执行完成
+	time.Sleep(500 * time.Millisecond)
+
+	// 停止 channel
+	if err := c.Stop(ctx); err != nil {
+		t.Fatalf("Stop error = %v", err)
+	}
+
+	if !taskExecuted {
+		t.Error("Initial task was not executed")
+	}
+	if taskContent != "hello world" {
+		t.Errorf("Got task content %q, want %q", taskContent, "hello world")
+	}
+}
+
+// TestConsoleSetInitialTasks 测试设置初始任务
+func TestConsoleSetInitialTasks(t *testing.T) {
+	c := NewConsole(&mockAgentForConsole{}, true, nil)
+
+	tasks := []string{"task1", "task2"}
+	c.SetInitialTasks(tasks)
+
+	// 验证任务已设置（通过内部检查）
+	c.mu.Lock()
+	if len(c.initialTasks) != 2 {
+		t.Errorf("Got %d tasks, want 2", len(c.initialTasks))
+	}
+	if c.initialTasks[0] != "task1" || c.initialTasks[1] != "task2" {
+		t.Errorf("Tasks not set correctly: %v", c.initialTasks)
+	}
+	c.mu.Unlock()
+}
+
+// TestConsoleSetRunOnce 测试设置 runOnce 标志
+func TestConsoleSetRunOnce(t *testing.T) {
+	c := NewConsole(&mockAgentForConsole{}, true, nil)
+
+	c.SetRunOnce(true)
+	c.mu.Lock()
+	if !c.runOnce {
+		t.Error("runOnce not set to true")
+	}
+	c.mu.Unlock()
+
+	c.SetRunOnce(false)
+	c.mu.Lock()
+	if c.runOnce {
+		t.Error("runOnce not set to false")
+	}
+	c.mu.Unlock()
+}
+
 var _ Channel = (*ConsoleChannel)(nil)
 var _ FileSender = (*ConsoleChannel)(nil)

@@ -27,16 +27,58 @@ import (
 )
 
 var appCmd = &cobra.Command{
-	Use:   "app",
+	Use:   "app [task]",
 	Short: "Start the GopherPaw service",
-	Long:  "Starts channels (console, telegram, etc.) and scheduler. Press Ctrl+C to shutdown.",
+	Long:  "Starts channels (console, telegram, etc.) and scheduler. Press Ctrl+C to shutdown.\n\n" +
+		"Args:\n" +
+		"  task    Optional initial task to execute on startup.",
 	RunE:  runApp,
 }
 
-var skipEnvCheck bool
+var (
+	skipEnvCheck bool
+	runOnce      bool // 执行完初始任务后是否退出
+)
 
 func init() {
 	appCmd.Flags().BoolVar(&skipEnvCheck, "skip-env-check", false, "Skip runtime environment check on startup")
+	appCmd.Flags().BoolVar(&runOnce, "once", false, "Exit after executing the initial task")
+}
+
+// memoryHookCount returns 1 if memory compaction is configured, 0 otherwise.
+func memoryHookCount(threshold int) int {
+	if threshold > 0 {
+		return 1
+	}
+	return 0
+}
+
+// buildSkillPathMap 构建技能名称到 SKILL.md 路径的简单映射。
+// 只用于记录哪些技能可用，具体的技能选择由 AI 自己分析决定。
+func buildSkillPathMap(skillMgr *skills.Manager, workingDir string) map[string]string {
+	result := make(map[string]string)
+
+	// 获取所有已启用的技能
+	allSkills := skillMgr.GetEnabledSkills()
+	for _, skill := range allSkills {
+		if skill.Path == "" {
+			continue
+		}
+
+		// 转换为相对于 workingDir 的路径
+		relPath := skill.Path
+		if filepath.IsAbs(skill.Path) {
+			if rp, err := filepath.Rel(workingDir, skill.Path); err == nil {
+				relPath = rp
+			}
+		}
+
+		// 只记录技能名称 -> 路径的映射
+		// AI 会基于技能的 description 和 content 来判断是否使用
+		result[skill.Name] = relPath
+	}
+
+	return result
 }
 
 func runApp(cmd *cobra.Command, args []string) error {
@@ -111,7 +153,7 @@ func runApp(cmd *cobra.Command, args []string) error {
 			zap.String("active", llmProvider.ActiveSlot()),
 		)
 
-		memoryStore := memory.New(cfg.Memory)
+		memoryStore := memory.New(cfg.Memory, llmProvider)
 		toolsList := tools.RegisterBuiltin()
 		log.Info("Memory and tools ready", zap.Int("tools", len(toolsList)))
 
@@ -138,17 +180,80 @@ func runApp(cmd *cobra.Command, args []string) error {
 		if err := skillMgr.LoadSkills(workingDir, configDir, cfg.Skills); err != nil {
 			log.Warn("load skills failed, continuing without skills", zap.Error(err))
 		}
-		systemPrompt := cfg.Agent.SystemPrompt
-		if add := skillMgr.GetSystemPromptAddition(); add != "" {
-			systemPrompt = systemPrompt + "\n\n" + add
-		}
-		agentCfg := cfg.Agent
-		agentCfg.SystemPrompt = systemPrompt
 
-		ag := agent.NewReact(llmProvider, memoryStore, toolsList, agentCfg)
+		// Create PromptLoader with fallback to config system prompt
+		agentCfg := cfg.Agent
+		loader := agent.NewPromptLoader(workingDir, agentCfg.SystemPrompt)
+
+		// Get skill index for lazy loading (AgentScope-style)
+		// Use compact version for better visibility
+		skillIndex := skillMgr.GetSkillIndexCompact(workingDir)
+
+		// Debug log for skill index (temporary)
+		if skillIndex != "" {
+			preview := skillIndex
+			if len(preview) > 300 {
+				preview = preview[:300] + "..."
+			}
+			log.Info("Skill index generated",
+				zap.Int("length", len(skillIndex)),
+				zap.String("preview", preview))
+		}
+
+		// Create agent with PromptLoader and skill index
+		// This ensures skill index is passed to BuildSystemPrompt() whether
+		// using six-file system or falling back to config system prompt
+		ag := agent.NewReactWithPrompt(llmProvider, memoryStore, toolsList, agentCfg, loader, skillIndex)
+
+		// 设置技能路径映射，用于智能提点
+		skillPathMap := buildSkillPathMap(skillMgr, workingDir)
+		ag.SetSkillPaths(skillPathMap)
+		log.Info("Skill paths configured for capability reminders", zap.Int("skills", len(skillPathMap)))
+
+		// 配置规划-执行分离模式
+		if agentCfg.Planning != nil && agentCfg.Planning.Enabled {
+			// 获取执行模式：优先使用 planning.execution_mode，其次使用 running.execution_mode
+			executionMode := agentCfg.Planning.ExecutionMode
+			if executionMode == "" {
+				executionMode = agentCfg.Running.ExecutionMode
+			}
+			if executionMode == "" {
+				executionMode = "auto" // 默认自动模式
+			}
+
+			ag.SetExecutionMode(executionMode)
+			ag.EnablePlanningMode(true)
+
+			// 设置技能和 MCP 管理器（用于规划模式）
+			ag.SetSkillsManager(skillMgr)
+			ag.SetMCPManager(mcpMgr)
+
+			// 设置工作目录
+			skillsActiveDir := filepath.Join(configDir, cfg.Skills.ActiveDir)
+			ag.SetWorkingDirectories(workingDir, skillsActiveDir)
+
+			// 设置能力缓存 TTL
+			cacheTTL := agentCfg.Planning.CapabilityCacheTTL
+			if cacheTTL <= 0 {
+				cacheTTL = 24 // 默认 24 小时
+			}
+			ag.SetCapabilityCacheTTL(cacheTTL)
+
+			log.Info("Planning-Execution mode enabled",
+				zap.String("executionMode", executionMode),
+				zap.Int("cacheTTL", cacheTTL),
+				zap.Bool("aiSummary", agentCfg.Planning.AISummaryEnabled),
+			)
+		}
 
 		// Add Bootstrap Hook for first-time user guidance
 		ag.AddHook(agent.BootstrapHook(workingDir, cfg.Agent.Language))
+
+		// Add Skill Reminder Hook to detect relevant skills before processing
+		ag.AddHook(agent.SkillReminderHook(skillMgr))
+
+		// Add File Extension Skill Hook for document creation detection
+		ag.AddHook(agent.FileExtensionSkillHook(skillMgr))
 
 		// Add Memory Compaction Hook if threshold is configured
 		if cfg.Memory.CompactThreshold > 0 {
@@ -157,11 +262,22 @@ func runApp(cmd *cobra.Command, args []string) error {
 
 		log.Info("Agent ready",
 			zap.String("agent", "react"),
-			zap.Int("hooks", 2),
+			zap.Int("hooks", 3+memoryHookCount(cfg.Memory.CompactThreshold)), // BootstrapHook + SkillReminderHook + FileExtensionSkillHook + optional MemoryCompactionHook
 		)
 
 		channelMgr := channels.NewManager(ag, cfg.Channels)
 		sched := scheduler.New(ag, cfg.Scheduler)
+
+		// 设置 Console 渠道的初始任务和 runOnce 选项
+		if len(args) > 0 {
+			for _, ch := range channelMgr.Channels() {
+				if consoleCh, ok := ch.(*channels.ConsoleChannel); ok {
+					consoleCh.SetInitialTasks(args)
+					consoleCh.SetRunOnce(runOnce)
+					break
+				}
+			}
+		}
 
 		webhookSrv := channels.NewWebhookServer(cfg.Server.Host, cfg.Server.Port)
 		for _, ch := range channelMgr.Channels() {

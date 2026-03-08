@@ -45,13 +45,15 @@ func truncateForConsole(s string, maxLen int) string {
 // ConsoleChannel reads from stdin and writes to stdout.
 // Used for development and testing.
 type ConsoleChannel struct {
-	agent   agent.Agent
-	enabled bool
-	stopCh  chan struct{}
-	doneCh  chan struct{}
-	mu      sync.Mutex
-	running bool
-	onMsg   func(ctx context.Context, chName string, msg IncomingMessage) error
+	agent        agent.Agent
+	enabled      bool
+	stopCh       chan struct{}
+	doneCh       chan struct{}
+	mu           sync.Mutex
+	running      bool
+	onMsg        func(ctx context.Context, chName string, msg IncomingMessage) error
+	initialTasks []string // 初始任务列表
+	runOnce      bool     // 执行完初始任务后是否退出
 }
 
 // NewConsole creates a console channel.
@@ -63,6 +65,20 @@ func NewConsole(ag agent.Agent, enabled bool, onMsg func(context.Context, string
 		doneCh:  make(chan struct{}),
 		onMsg:   onMsg,
 	}
+}
+
+// SetInitialTasks 设置启动时需要执行的任务。
+func (c *ConsoleChannel) SetInitialTasks(tasks []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.initialTasks = tasks
+}
+
+// SetRunOnce 设置执行完初始任务后是否退出。
+func (c *ConsoleChannel) SetRunOnce(once bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.runOnce = once
 }
 
 // Name returns the channel identifier.
@@ -78,10 +94,57 @@ func (c *ConsoleChannel) Start(ctx context.Context) error {
 		return nil
 	}
 	c.running = true
+
+	// 获取初始任务和 runOnce 配置
+	tasks := c.initialTasks
+	runOnce := c.runOnce
 	c.mu.Unlock()
 
 	go func() {
 		defer close(c.doneCh)
+
+		// 执行初始任务
+		if len(tasks) > 0 {
+			reporter := &consoleProgressReporter{}
+			for _, task := range tasks {
+				if task == "" {
+					continue
+				}
+				msg := IncomingMessage{
+					ChatID:    "console:default",
+					UserID:    "default",
+					UserName:  "user",
+					Content:   task,
+					Channel:   "console",
+					Timestamp: time.Now().Unix(),
+				}
+
+				runCtx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+				runCtx = agent.WithProgressReporter(runCtx, reporter)
+
+				var err error
+				if c.onMsg != nil {
+					err = c.onMsg(runCtx, "console", msg)
+				} else {
+					var response string
+					response, err = c.agent.Run(runCtx, "console:default", task)
+					if err == nil && response != "" {
+						fmt.Println(response)
+					}
+				}
+				cancel()
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				}
+			}
+
+			// 如果设置了 runOnce，执行完任务后直接退出
+			if runOnce {
+				return
+			}
+		}
+
 		lineCh := make(chan string, 1)
 		go func() {
 			scanner := bufio.NewScanner(os.Stdin)
