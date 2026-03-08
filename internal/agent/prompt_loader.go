@@ -62,12 +62,7 @@ func (p *PromptLoader) WorkingDir() string {
 // fallback is used when no six-file files exist (e.g. config.yaml system_prompt).
 func NewPromptLoader(workingDir string, fallback string) *PromptLoader {
 	if workingDir == "" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			workingDir = filepath.Join(home, ".gopherpaw")
-		} else {
-			workingDir = "."
-		}
+		workingDir = "."
 	}
 	return &PromptLoader{
 		workingDir: workingDir,
@@ -142,6 +137,7 @@ func (p *PromptLoader) DeleteBootstrap() error {
 }
 
 // BuildSystemPrompt concatenates: SOUL + AGENTS + PROFILE + today MEMORY + skillsContent.
+// Each section is prefixed with a "# filename" header for debugging clarity.
 // Returns empty string if SOUL and AGENTS are missing (caller should use fallback).
 func (p *PromptLoader) BuildSystemPrompt(skillsContent string) string {
 	var parts []string
@@ -150,33 +146,47 @@ func (p *PromptLoader) BuildSystemPrompt(skillsContent string) string {
 	if err != nil || soul == "" {
 		return ""
 	}
-	parts = append(parts, soul)
+	parts = append(parts, "# SOUL.md\n\n"+soul)
 
 	agents, err := p.LoadAGENTS()
 	if err != nil || agents == "" {
 		return ""
 	}
-	parts = append(parts, agents)
+	parts = append(parts, "# AGENTS.md\n\n"+agents)
 
 	profile, _ := p.LoadPROFILE()
 	if profile != "" {
-		parts = append(parts, profile)
+		parts = append(parts, "# PROFILE.md\n\n"+profile)
 	}
 
 	memMain, _ := p.readFile(fileMEMORY)
 	if memMain != "" {
-		parts = append(parts, memMain)
+		parts = append(parts, "# MEMORY.md\n\n"+memMain)
 	}
 	memToday, _ := p.readTodayMemory()
 	if memToday != "" {
-		parts = append(parts, memToday)
+		parts = append(parts, "# memory/"+time.Now().Format("2006-01-02")+".md\n\n"+memToday)
 	}
 
 	if skillsContent != "" {
-		parts = append(parts, strings.TrimSpace(skillsContent))
+		parts = append(parts, "# Active Skills\n\n"+strings.TrimSpace(skillsContent))
 	}
 
 	return strings.Join(parts, "\n\n")
+}
+
+// stripYAMLFrontmatter removes YAML frontmatter (---wrapped) from content.
+// This matches CoPaw's behavior where YAML frontmatter like ---summary...---
+// is stripped before including the content in the system prompt.
+func stripYAMLFrontmatter(content string) string {
+	if !strings.HasPrefix(content, "---") {
+		return content
+	}
+	parts := strings.SplitN(content, "---", 3)
+	if len(parts) >= 3 {
+		return strings.TrimSpace(parts[2])
+	}
+	return content
 }
 
 func (p *PromptLoader) readFile(name string) (string, error) {
@@ -188,7 +198,9 @@ func (p *PromptLoader) readFile(name string) (string, error) {
 		}
 		return "", fmt.Errorf("read %s: %w", name, err)
 	}
-	return strings.TrimSpace(string(data)), nil
+	content := strings.TrimSpace(string(data))
+	content = stripYAMLFrontmatter(content)
+	return content, nil
 }
 
 func (p *PromptLoader) readTodayMemory() (string, error) {
