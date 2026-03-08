@@ -107,6 +107,15 @@ func (t *HTTPTool) Execute(ctx context.Context, arguments string) (string, error
 		return "", fmt.Errorf("create request: %w", err)
 	}
 
+	// 设置默认中文 HTTP headers（操作系统级别的区域设置）
+	if req.Header.Get("Accept-Language") == "" {
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	}
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	}
+
+	// 处理用户自定义 headers（会覆盖默认值）
 	for k, v := range args.Headers {
 		req.Header.Set(k, v)
 	}
@@ -129,11 +138,35 @@ func (t *HTTPTool) Execute(ctx context.Context, arguments string) (string, error
 		return fmt.Sprintf("Error: HTTP %d\n%s", resp.StatusCode, string(data)), nil
 	}
 
-	// Truncate very large responses
-	if len(data) > 64*1024 {
-		return fmt.Sprintf("%s\n\n(Response truncated. Total %d bytes.)", string(data[:64*1024]), len(data)), nil
+	// 检查 Content-Type 并处理内容
+	contentType := resp.Header.Get("Content-Type")
+	body := string(data)
+
+	// 如果是 HTML，自动提取文本内容
+	if shouldExtractContent(contentType) {
+		extracted := cleanHTML(body)
+		// 如果提取后的内容非空且明显不同，使用提取结果
+		if extracted != "" && extracted != body {
+			body = fmt.Sprintf("[Extracted from %s]\n\n%s", contentType, extracted)
+			// 如果原始内容太长，添加提示
+			if len(extracted) < len(data) {
+				body += fmt.Sprintf("\n\n[Note: Original content was %d bytes, extracted to %d characters]",
+					len(data), len(extracted))
+			}
+		}
 	}
-	return string(data), nil
+
+	// 对 HTML 响应，如果提取后内容为空或太短，说明可能是动态页面
+	if isHTMLContentType(contentType) && len(body) < 200 {
+		body += "\n\n[Note: This appears to be a dynamic page. Consider using browser_use tool for JavaScript-heavy sites.]"
+	}
+
+	// Truncate very large responses
+	const maxResponseSize = 64 * 1024
+	if len(body) > maxResponseSize {
+		return fmt.Sprintf("%s\n\n(Response truncated. Total %d bytes.)", body[:maxResponseSize], len(body)), nil
+	}
+	return body, nil
 }
 
 // Ensure HTTPTool implements agent.Tool.

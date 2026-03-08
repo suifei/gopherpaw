@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/suifei/gopherpaw/internal/config"
@@ -14,16 +15,29 @@ import (
 )
 
 // ReactAgent implements Agent with a ReAct loop: Thought -> Action -> Observation -> ... -> Final Answer.
+// Supports both traditional ReAct mode and Planning-Execution separation mode.
 type ReactAgent struct {
-	llmMu         sync.RWMutex
-	llm           LLMProvider
-	memory        MemoryStore
-	tools         []Tool
-	toolMap       map[string]Tool
-	cfg           config.AgentConfig
-	loader        *PromptLoader
-	skillsContent string
-	hooks         []Hook
+	llmMu              sync.RWMutex
+	llm                LLMProvider
+	memory             MemoryStore
+	tools              []Tool
+	toolMap            map[string]Tool
+	cfg                config.AgentConfig
+	loader             *PromptLoader
+	skillsContent      string
+	hooks              []Hook
+	contextManager     ContextManager     // AI 协作框架的上下文管理器
+	skillPaths         map[string]string  // 技能路径映射，用于智能提点
+	// Planning-Execution 分离架构相关字段
+	planningEnabled    bool               // 是否启用规划模式
+	executionMode      string             // 执行模式: "react", "planning", "auto"
+	extractor          *Extractor         // 能力提取器
+	planner            *TaskPlanner       // 任务规划器
+	skillsMgr          any                // skills.Manager (避免循环依赖)
+	mcpMgr             any                // mcp.Manager (避免循环依赖)
+	workingDir         string             // 工作目录
+	skillsActiveDir    string             // 技能目录
+	capabilityCacheTTL int                // 能力缓存 TTL (小时)
 }
 
 // NewReact creates a ReAct agent with the given dependencies.
@@ -55,16 +69,40 @@ func NewReactWithPrompt(llm LLMProvider, memory MemoryStore, tools []Tool, cfg c
 		finalTools = append(finalTools, t)
 	}
 
-	return &ReactAgent{
-		llm:           llm,
-		memory:        memory,
-		tools:         finalTools,
-		toolMap:       toolMap,
-		cfg:           cfg,
-		loader:        loader,
-		skillsContent: skillsContent,
-		hooks:         nil,
+	// 初始化 ContextManager
+	ctxMgr := NewMemoryContextManager()
+
+	agent := &ReactAgent{
+		llm:            llm,
+		memory:         memory,
+		tools:          finalTools,
+		toolMap:        toolMap,
+		cfg:            cfg,
+		loader:         loader,
+		skillsContent:  skillsContent,
+		hooks:          nil,
+		contextManager: ctxMgr,
+		skillPaths:     make(map[string]string),
+		// Planning-Execution 默认值
+		planningEnabled: false,
+		executionMode:   "react", // 默认使用传统 ReAct 模式
+		capabilityCacheTTL: 24,   // 默认 24 小时缓存
 	}
+
+	return agent
+}
+
+// SetSkillPaths 设置技能路径映射，用于智能提点。
+func (a *ReactAgent) SetSkillPaths(paths map[string]string) {
+	a.skillPaths = paths
+	if mcm, ok := a.contextManager.(*memoryContextManager); ok {
+		mcm.SetSkillPaths(paths)
+	}
+}
+
+// GetContextManager 返回 ContextManager。
+func (a *ReactAgent) GetContextManager() ContextManager {
+	return a.contextManager
 }
 
 // registerTool registers a tool according to the namesake strategy.
@@ -149,10 +187,32 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 		zap.String("chatID", chatID),
 		zap.Int("msgLen", len(message)),
 		zap.String("lastUserMsg", truncate(message, 200)),
+		zap.String("executionMode", a.executionMode),
 	)
 	if reporter != nil {
 		reporter.OnThinking()
 	}
+
+	// 检查是否使用规划模式
+	if a.shouldUsePlanningMode(message) {
+		log.Debug("Using planning mode for this request")
+		result, err := a.runWithPlanning(ctx, chatID, message)
+		if err != nil {
+			log.Warn("Planning mode failed, falling back to ReAct", zap.Error(err))
+			// 规划失败时降级到 ReAct 模式
+			return a.runWithReAct(ctx, chatID, message)
+		}
+		return result, nil
+	}
+
+	// 使用传统 ReAct 模式
+	return a.runWithReAct(ctx, chatID, message)
+}
+
+// runWithReAct 使用传统的 ReAct 模式运行。
+func (a *ReactAgent) runWithReAct(ctx context.Context, chatID string, message string) (string, error) {
+	log := logger.L()
+	reporter := getProgressReporter(ctx)
 
 	// Save user message
 	userMsg := Message{Role: "user", Content: message}
@@ -172,6 +232,9 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 	}
 
 	var finalContent string
+	// 待批量保存的工具消息
+	var pendingToolMessages []Message
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -198,6 +261,11 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 			zap.String("lastUserMsg", truncate(lastUser, 200)),
 		)
 
+		// 最终安全检查：确保消息总长度不超过智谱 API 限制
+		// 如果超过 20K 字符，删除最旧的工具消息，直到符合要求
+		const hardMaxLength = 20000
+		messages = enforceMaxLength(messages, hardMaxLength)
+
 		req := &ChatRequest{
 			Messages:    messages,
 			Tools:       toolDefs,
@@ -221,6 +289,66 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 			zap.String("contentPreview", truncate(resp.Content, 200)),
 		)
 
+		// 解析结构化响应（AI 协作框架）
+		structured, parseErr := ParseStructuredResponse(resp.Content)
+		if parseErr != nil {
+			log.Debug("Failed to parse structured response", zap.Error(parseErr))
+		}
+		if structured != nil {
+			log.Debug("Structured response parsed",
+				zap.String("thought", truncate(structured.Thought, 100)),
+				zap.Int("capabilitiesNeeded", len(structured.CapabilitiesNeeded)),
+				zap.Int("storageRequests", len(structured.StorageRequests)),
+				zap.Int("retrievalRequests", len(structured.RetrievalRequests)))
+
+			// 处理存储请求
+			if len(structured.StorageRequests) > 0 {
+				if err := a.contextManager.Store(ctx, chatID, structured.StorageRequests); err != nil {
+					log.Warn("Failed to store content", zap.Error(err))
+				}
+			}
+
+			// 处理能力需求 - 生成智能提点
+			if len(structured.CapabilitiesNeeded) > 0 {
+				reminder := a.contextManager.BuildCapabilityReminder(ctx, chatID, structured.CapabilitiesNeeded)
+				if reminder != "" {
+					log.Debug("Capability reminder generated", zap.String("reminder", truncate(reminder, 200)))
+					// 将提醒注入到下一条消息中
+					// 我们通过在 messages 列表中添加一个临时的 system 消息来实现
+					// 这条消息不会被保存到 memory
+					messages = append(messages, Message{
+						Role:    "system",
+						Content: reminder,
+					})
+				}
+			}
+
+			// 检查是否是最终响应
+			if structured.FinalAnswer != "" && len(resp.ToolCalls) == 0 {
+				finalContent = structured.FinalAnswer
+				log.Info("Final answer from structured response", zap.String("content", truncate(finalContent, 200)))
+				break
+			}
+		}
+
+		// 处理检索请求 - 在下一轮开始前注入存储的内容
+		if structured != nil && len(structured.RetrievalRequests) > 0 {
+			retrieved, err := a.contextManager.Retrieve(ctx, chatID, structured.RetrievalRequests)
+			if err == nil && len(retrieved) > 0 {
+				var retrievedContent []string
+				for _, item := range retrieved {
+					retrievedContent = append(retrievedContent,
+						fmt.Sprintf("**%s** (%s)\n%s", item.Name, item.Description, item.Content))
+				}
+				retrievalMsg := Message{
+					Role:    "system",
+					Content: "--- 📦 已检索存储内容 ---\n" + strings.Join(retrievedContent, "\n\n") + "\n--- 存储内容结束 ---",
+				}
+				messages = append(messages, retrievalMsg)
+				log.Debug("Retrieved content injected", zap.Int("count", len(retrieved)))
+			}
+		}
+
 		// Save assistant message
 		assistantMsg := Message{
 			Role:      "assistant",
@@ -232,7 +360,10 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 		}
 
 		if len(resp.ToolCalls) == 0 {
-			finalContent = strings.TrimSpace(resp.Content)
+			// 如果没有结构化响应的 FinalAnswer，使用原始内容
+			if finalContent == "" {
+				finalContent = strings.TrimSpace(resp.Content)
+			}
 			log.Info("Final answer", zap.String("content", truncate(finalContent, 200)))
 			break
 		}
@@ -242,23 +373,62 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 		toolResults := a.executeToolsParallel(ctx, chatID, resp.ToolCalls, reporter)
 
 		// Append tool results in order (matching tool_call order)
+		const maxToolResultLen = 5000 // 5K 字符硬限制（智谱 API 限制更严格）
 		for i, tr := range toolResults {
+			result := tr.Result
+			// 工具结果硬截断：防止过大的响应（如整个网页 HTML）导致 token 超限
+			if len(result) > maxToolResultLen {
+				result = result[:maxToolResultLen] + "\n...[内容过长，已截断]"
+			}
+
 			log.Debug("Tool result",
 				zap.String("tool", resp.ToolCalls[i].Name),
-				zap.String("result", truncate(tr.Result, 500)),
+				zap.String("result", truncate(result, 500)),
 			)
 			if reporter != nil {
-				reporter.OnToolResult(resp.ToolCalls[i].Name, tr.Result)
+				reporter.OnToolResult(resp.ToolCalls[i].Name, result)
 			}
 
 			toolMsg := Message{
 				Role:       "tool",
-				Content:    tr.Result,
+				Content:    result,
 				ToolCallID: resp.ToolCalls[i].ID,
 			}
 			messages = append(messages, toolMsg)
-			if err := a.memory.Save(ctx, chatID, toolMsg); err != nil {
-				return "", fmt.Errorf("save tool message: %w", err)
+			// 收集待保存的工具消息，不立即保存
+			pendingToolMessages = append(pendingToolMessages, toolMsg)
+		}
+
+		// 批量保存工具消息（在下一轮 LLM 调用前）
+		if len(pendingToolMessages) > 0 {
+			log.Debug("Batch saving tool messages", zap.Int("count", len(pendingToolMessages)))
+			// 使用更短的超时上下文来保存，避免阻塞太久
+			saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			for _, msg := range pendingToolMessages {
+				if err := a.memory.Save(saveCtx, chatID, msg); err != nil {
+					log.Warn("failed to save tool message", zap.Error(err))
+					// 继续保存其他消息，不中断流程
+				}
+			}
+			saveCancel()
+			pendingToolMessages = nil
+		}
+
+		// 智能压缩：当对话历史过长时，进行总结提炼
+		// 在第 1 轮后检查，智谱 API 限制较严格
+		const compressThreshold = 15000 // 当 messages 总长度超过 15K 字符时触发压缩
+		if turn >= 1 && totalMessageLength(messages) > compressThreshold {
+			compressed, err := a.compressMessages(ctx, messages)
+			if err == nil && len(compressed) > 0 {
+				oldLen := len(messages)
+				messages = compressed
+				log.Debug("Compressed conversation history",
+					zap.Int("originalCount", oldLen),
+					zap.Int("compressedCount", len(compressed)),
+					zap.Int("reduced", oldLen-len(compressed)),
+				)
+			} else if err != nil {
+				log.Warn("Compression failed, continuing with original messages", zap.Error(err))
 			}
 		}
 	}
@@ -280,6 +450,37 @@ func lastUserMessage(msgs []Message) string {
 		}
 	}
 	return ""
+}
+
+// enforceMaxLength 确保消息总长度不超过限制，优先删除最旧的工具消息
+func enforceMaxLength(msgs []Message, maxLen int) []Message {
+	for totalMessageLength(msgs) > maxLen && len(msgs) > 3 {
+		// 找到最旧的工具消息并删除
+		for i, msg := range msgs {
+			if msg.Role == "tool" {
+				// 删除这条工具消息和对应的 assistant 消息
+				newMsgs := make([]Message, 0, len(msgs)-1)
+				newMsgs = append(newMsgs, msgs[:i]...)
+				if i+1 < len(msgs) {
+					newMsgs = append(newMsgs, msgs[i+1:]...)
+				} else {
+					newMsgs = msgs[:i]
+				}
+				msgs = newMsgs
+				break
+			}
+		}
+		// 如果没有工具消息可删，但仍然超长，删除最旧的 assistant 消息
+		if totalMessageLength(msgs) > maxLen {
+			for i, msg := range msgs {
+				if msg.Role == "assistant" && len(msg.ToolCalls) == 0 {
+					msgs = append(msgs[:i], msgs[i+1:]...)
+					break
+				}
+			}
+		}
+	}
+	return msgs
 }
 
 func (a *ReactAgent) executeTool(ctx context.Context, chatID string, tc ToolCall) (string, error) {
@@ -494,6 +695,339 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+// totalMessageLength 计算消息列表的总字符长度。
+func totalMessageLength(messages []Message) int {
+	total := 0
+	for _, m := range messages {
+		total += len(m.Content)
+	}
+	return total
+}
+
+// compressMessages 智能压缩对话历史。
+// 保留最近 3 轮完整对话，将更早的历史压缩成简洁摘要。
+func (a *ReactAgent) compressMessages(ctx context.Context, messages []Message) ([]Message, error) {
+	const keepRecent = 6 // 保留最近 3 轮对话（user + assistant/tool 成对）
+	if len(messages) <= keepRecent+1 { // +1 是 system prompt
+		return messages, nil
+	}
+
+	// 分离需要压缩的部分和保留的最近对话
+	// 跳过 system prompt (index 0)，压缩 1 到 len-keepRecent 的历史
+	toCompress := messages[1 : len(messages)-keepRecent]
+	recent := messages[len(messages)-keepRecent:]
+	systemPrompt := messages[0]
+
+	// 如果需要压缩的内容不多，直接返回
+	if len(toCompress) < 4 {
+		return messages, nil
+	}
+
+	// 构建 LLM 压缩请求
+	compressPrompt := `请将以下对话历史压缩成简洁的结构化摘要。
+
+要求：
+1. 保留用户的核心需求和意图
+2. 保留关键的工具调用结果（如价格、数据等具体信息）
+3. 删除中间过程和 AI 已知的通用知识
+4. 输出格式为：用户意图：xxx | 关键信息：xxx
+5. 摘要长度控制在 200 字以内
+
+对话历史：
+` + formatMessagesForCompression(toCompress)
+
+	// 创建压缩专用的 LLM 请求（不使用工具）
+	a.llmMu.RLock()
+	provider := a.llm
+	a.llmMu.RUnlock()
+
+	compressReq := &ChatRequest{
+		Messages: []Message{
+			{Role: "system", Content: "你是对话历史压缩助手。"},
+			{Role: "user", Content: compressPrompt},
+		},
+		MaxTokens: 500,
+	}
+
+	resp, err := provider.Chat(ctx, compressReq)
+	if err != nil {
+		return nil, fmt.Errorf("compression LLM call: %w", err)
+	}
+
+	// 检查压缩结果是否有效
+	summaryContent := strings.TrimSpace(resp.Content)
+	if summaryContent == "" {
+		// 如果 LLM 返回空内容，跳过压缩摘要，使用默认行为
+		// 这避免了发送只有前缀的空消息导致 API 返回 400 错误
+		compressed := make([]Message, 0, len(recent)+1)
+		compressed = append(compressed, systemPrompt)
+		compressed = append(compressed, recent...)
+		return compressed, nil
+	}
+
+	// 构建压缩后的消息列表
+	compressed := make([]Message, 0, len(recent)+2)
+	compressed = append(compressed, systemPrompt)
+	// 将压缩摘要作为一条 system 消息插入
+	compressed = append(compressed, Message{
+		Role:    "system",
+		Content: "【对话历史摘要】" + summaryContent,
+	})
+	compressed = append(compressed, recent...)
+
+	return compressed, nil
+}
+
+// formatMessagesForCompression 将消息列表格式化为压缩用的文本。
+func formatMessagesForCompression(messages []Message) string {
+	var sb strings.Builder
+	for i, m := range messages {
+		switch m.Role {
+		case "user":
+			sb.WriteString(fmt.Sprintf("用户%d: %s\n", i, truncate(m.Content, 200)))
+		case "assistant":
+			if len(m.ToolCalls) > 0 {
+				sb.WriteString(fmt.Sprintf("助手%d: [调用工具: %d个]\n", i, len(m.ToolCalls)))
+			} else if m.Content != "" {
+				sb.WriteString(fmt.Sprintf("助手%d: %s\n", i, truncate(m.Content, 200)))
+			}
+		case "tool":
+			// 只记录工具结果的前 100 字符，避免摘要本身过长
+			sb.WriteString(fmt.Sprintf("工具结果: %s\n", truncate(m.Content, 100)))
+		}
+	}
+	return sb.String()
+}
+
+// ============================================================================
+// Planning-Execution Separation Mode
+// ============================================================================
+
+// shouldUsePlanningMode 判断是否应该使用规划模式。
+func (a *ReactAgent) shouldUsePlanningMode(message string) bool {
+	switch a.executionMode {
+	case "planning":
+		return a.planningEnabled
+	case "react":
+		return false
+	case "auto":
+		// 根据消息复杂度自动判断
+		return a.planningEnabled && a.isComplexTask(message)
+	default:
+		return false
+	}
+}
+
+// isComplexTask 判断任务是否足够复杂，需要使用规划模式。
+func (a *ReactAgent) isComplexTask(message string) bool {
+	// 检测复杂任务的信号词
+	complexSignals := []string{
+		"生成", "报告", "文档", "分析", "对比", "搜索", "比较",
+		"并", "然后", "最后", "步骤", "首先", "接着",
+		"总结", "汇总", "提取", "收集", "整理",
+	}
+
+	messageLower := strings.ToLower(message)
+	for _, signal := range complexSignals {
+		if strings.Contains(messageLower, signal) {
+			return true
+		}
+	}
+
+	// 消息长度阈值（中文按字符计算，100 字符以上认为可能复杂）
+	if utf8.RuneCountInString(message) > 100 {
+		return true
+	}
+
+	// 包含多个句子或标点符号也可能表示复杂任务
+	sentenceCount := 0
+	for _, r := range message {
+		if r == '。' || r == '！' || r == '？' || r == '.' || r == '!' || r == '?' {
+			sentenceCount++
+		}
+	}
+	if sentenceCount >= 2 {
+		return true
+	}
+
+	return false
+}
+
+// runWithPlanning 使用规划-执行分离模式运行。
+func (a *ReactAgent) runWithPlanning(ctx context.Context, chatID string, message string) (string, error) {
+	log := logger.L()
+
+	// 1. 获取/更新能力清单
+	if a.extractor == nil {
+		a.llmMu.RLock()
+		llm := a.llm
+		a.llmMu.RUnlock()
+
+		a.extractor = NewExtractor(
+			llm,
+			a.tools,
+			nil, // skillsMgr
+			nil, // mcpMgr
+			a.cfg,
+			a.workingDir,
+			a.skillsActiveDir,
+			a.capabilityCacheTTL,
+		)
+	}
+
+	registry, err := a.extractor.ExtractCapabilities(ctx)
+	if err != nil {
+		return "", fmt.Errorf("extract capabilities: %w", err)
+	}
+
+	// 2. 初始化规划器
+	if a.planner == nil {
+		a.llmMu.RLock()
+		llm := a.llm
+		a.llmMu.RUnlock()
+
+		cfg := DefaultPlanningConfig()
+		a.planner = NewTaskPlanner(llm, cfg)
+	}
+
+	// 3. 获取对话上下文摘要
+	context, err := a.getConversationSummary(ctx, chatID)
+	if err != nil {
+		log.Warn("Failed to get conversation summary", zap.Error(err))
+		context = ""
+	}
+
+	// 4. 规划阶段
+	plan, err := a.planner.Plan(ctx, &PlanningRequest{
+		UserMessage:       message,
+		CapabilitySummary: registry.Summary,
+		Context:           context,
+		ConversationID:    chatID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("planning failed: %w", err)
+	}
+
+	log.Info("Execution plan generated",
+		zap.Int("steps", len(plan.Tasks)),
+		zap.String("summary", plan.Summary),
+	)
+
+	// 5. 执行阶段
+	a.llmMu.RLock()
+	llm := a.llm
+	a.llmMu.RUnlock()
+
+	executor := NewExecutor(a, llm, a.tools, DefaultExecutionConfig())
+
+	// 设置技能和 MCP 管理器（如果有）
+	if a.skillsMgr != nil {
+		executor.SetSkillsManager(a.skillsMgr)
+	}
+	if a.mcpMgr != nil {
+		executor.SetMCPManager(a.mcpMgr)
+	}
+
+	result, err := executor.Execute(ctx, plan)
+	if err != nil {
+		return "", fmt.Errorf("execution failed: %w", err)
+	}
+
+	// 6. 保存对话到记忆
+	userMsg := Message{Role: "user", Content: message}
+	if err := a.memory.Save(ctx, chatID, userMsg); err != nil {
+		log.Warn("Failed to save user message", zap.Error(err))
+	}
+
+	assistantMsg := Message{Role: "assistant", Content: result}
+	if err := a.memory.Save(ctx, chatID, assistantMsg); err != nil {
+		log.Warn("Failed to save assistant message", zap.Error(err))
+	}
+
+	return result, nil
+}
+
+// getConversationSummary 获取对话的摘要，用于规划上下文。
+func (a *ReactAgent) getConversationSummary(ctx context.Context, chatID string) (string, error) {
+	// 获取最近的对话历史
+	history, err := a.memory.Load(ctx, chatID, 10) // 最近 10 条消息
+	if err != nil {
+		return "", err
+	}
+
+	if len(history) == 0 {
+		return "", nil
+	}
+
+	// 简单摘要：只保留最近几条用户消息的内容
+	var summaryParts []string
+	userCount := 0
+	for i := len(history) - 1; i >= 0 && userCount < 3; i-- {
+		if history[i].Role == "user" {
+			summaryParts = append([]string{history[i].Content}, summaryParts...)
+			userCount++
+		}
+	}
+
+	if len(summaryParts) == 0 {
+		return "", nil
+	}
+
+	return "最近的用户请求：\n" + strings.Join(summaryParts, "\n"), nil
+}
+
+// EnablePlanningMode 启用规划模式。
+func (a *ReactAgent) EnablePlanningMode(enabled bool) {
+	a.planningEnabled = enabled
+	logger.L().Info("Planning mode state changed", zap.Bool("enabled", enabled))
+}
+
+// SetExecutionMode 设置执行模式。
+func (a *ReactAgent) SetExecutionMode(mode string) {
+	switch mode {
+	case "react", "planning", "auto":
+		a.executionMode = mode
+		logger.L().Info("Execution mode changed", zap.String("mode", mode))
+	default:
+		logger.L().Warn("Invalid execution mode, using 'react'", zap.String("mode", mode))
+		a.executionMode = "react"
+	}
+}
+
+// SetSkillsManager 设置技能管理器（用于规划和执行）。
+func (a *ReactAgent) SetSkillsManager(mgr any) {
+	a.skillsMgr = mgr
+}
+
+// SetMCPManager 设置 MCP 管理器（用于规划和执行）。
+func (a *ReactAgent) SetMCPManager(mgr any) {
+	a.mcpMgr = mgr
+}
+
+// SetWorkingDirectories 设置工作目录和技能目录。
+func (a *ReactAgent) SetWorkingDirectories(workingDir, skillsActiveDir string) {
+	a.workingDir = workingDir
+	a.skillsActiveDir = skillsActiveDir
+}
+
+// SetCapabilityCacheTTL 设置能力缓存 TTL。
+func (a *ReactAgent) SetCapabilityCacheTTL(ttlHours int) {
+	a.capabilityCacheTTL = ttlHours
+}
+
+// GetExecutionMode 返回当前执行模式。
+func (a *ReactAgent) GetExecutionMode() string {
+	return a.executionMode
+}
+
+// RefreshCapabilities 刷新能力缓存。
+func (a *ReactAgent) RefreshCapabilities(ctx context.Context) error {
+	if a.extractor == nil {
+		return fmt.Errorf("extractor not initialized")
+	}
+	return a.extractor.Refresh(ctx)
 }
 
 // Ensure ReactAgent implements Agent.
