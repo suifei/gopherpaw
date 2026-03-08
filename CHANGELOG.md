@@ -4,6 +4,36 @@ All notable changes to GopherPaw will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-03-09
+
+### Added
+
+#### 规划-执行分离模式
+- **TaskPlanner** — 任务规划器，生成结构化执行计划
+- **Executor** — 执行器，按计划执行步骤
+- **ContextManager** — 上下文管理器
+- **CapabilityExtractor** — 能力提取器
+- **SkillHook** — Skill 钩子
+- **缓存系统** — 能力注册表和文件持久化
+
+#### CLI 增强
+- **任务参数支持** — 启动时直接传入任务: `./gopherpaw app "任务"`
+- **--once 标志** — 执行后自动退出
+
+#### HTML 内容提取
+- **自动检测** — Content-Type 检测
+- **文本提取** — HTML 自动提取文本内容
+- **JSON 保留** — JSON API 保持原始响应
+
+### Fixed
+- **LLM 400 错误** — 压缩消息结构修复
+- **提示词加载** — 对齐 CoPaw，移除 YAML 前言
+- **消息压缩** — 确保 user 消息保留
+
+### Changed
+- **桌面容器** — 轻量级容器支持，VNC 密码管理优化
+- **性能优化** — 节省 120-180 tokens/次
+
 ## [0.2.0] - 2026-03-07
 
 ### 🐛 Bug Fixes

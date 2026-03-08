@@ -110,11 +110,18 @@ export GOPHERPAW_LLM_BASE_URL="https://llm.meta2cs.cn/v1"
 ### Console 模式（交互式聊天）
 
 ```bash
-# 启动 Console 通道
+# 启动 Console 通道（默认）
 ./gopherpaw app
 
 # 或指定工作目录
 ./gopherpaw app --workdir /path/to/your/project
+
+# 新增：启动时直接传入任务（非交互模式）
+./gopherpaw app "搜索最新资讯" --once
+./gopherpaw app "帮我分析数据"
+
+# 新增：执行单次任务后退出
+./gopherpaw app "用浏览器打开同程网站" --once
 ```
 
 **示例对话**：
@@ -129,7 +136,27 @@ AI: [调用 read_file 工具]
 
 You: 现在几点了？
 AI: [调用 get_current_time 工具]
-当前时间是 2026-03-07 14:30:00 CST
+当前时间是 2026-03-09 14:30:00 CST
+```
+
+### 规划-执行分离模式
+
+GopherPaw v0.3.0 新增规划-执行分离模式，支持复杂任务的自动规划和执行：
+
+```
+You: 用浏览器开同程的网站看看最新的旅游产品是什么，对比下携程
+AI: [TaskPlanner] 正在分析任务...
+    1. 打开同程网站
+    2. 提取旅游产品信息
+    3. 打开携程网站
+    4. 提取旅游产品信息
+    5. 对比价格和服务
+    6. 生成对比报告
+
+    [Executor] 开始执行...
+    [步骤 1] 启动浏览器...
+    [步骤 2] 访问同程网站...
+    ...
 ```
 
 ### 魔法命令
