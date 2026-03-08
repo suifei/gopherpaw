@@ -354,3 +354,163 @@ type Job interface {
 	// Name returns the job identifier.
 	Name() string
 }
+
+// ============================================================================
+// Structured Response Types - AI 协作约定
+// ============================================================================
+
+// StructuredResponse 表示 AI 的结构化响应约定。
+// 这允许 AI 向框架暴露其内部状态和需求，实现智能协作。
+type StructuredResponse struct {
+	Thought            string           `json:"thought"`             // 当前思考过程
+	CurrentFocus       string           `json:"current_focus"`       // 当前关注的部分
+	NextStep           string           `json:"next_step"`           // 下一步计划
+	CapabilitiesNeeded []string         `json:"capabilities_needed"` // 需要的能力（技能/MCP/工具）
+	ProgressUpdate     string           `json:"progress_update"`     // 进度更新
+	StorageRequests    []StorageRequest `json:"storage_requests"`    // 存储请求
+	RetrievalRequests  []string         `json:"retrieval_requests"`  // 检索请求
+	FinalAnswer        string           `json:"final_answer"`        // 给用户的最终回答
+}
+
+// StorageRequest 表示 AI 的存储请求。
+// AI 可以将有价值的信息存储起来，供后续使用。
+type StorageRequest struct {
+	Name        string `json:"name"`        // 唯一名称
+	Description string `json:"description"` // 简短描述
+	Content     string `json:"content"`     // 要存储的内容
+}
+
+// StoredContent 表示已存储的内容。
+type StoredContent struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Content     string    `json:"content"`
+	Timestamp   int64     `json:"timestamp"`
+	Tags        []string  `json:"tags,omitempty"` // 标签，用于检索
+}
+
+// Milestone 表示任务进度的里程碑。
+type Milestone struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"` // "pending", "in_progress", "completed"
+	Timestamp int64  `json:"timestamp"`
+}
+
+// ============================================================================
+// Context Manager Types
+// ============================================================================
+
+// contextManagerKey 是 context.Context 中 ContextManager 的键。
+type contextManagerKey struct{}
+
+// ContextManager 管理上下文和存储，作为 AI 的智能助手。
+type ContextManager interface {
+	// Store 存储内容供后续使用。
+	Store(ctx context.Context, chatID string, requests []StorageRequest) error
+
+	// Retrieve 检索已存储的内容。
+	Retrieve(ctx context.Context, chatID string, names []string) ([]StoredContent, error)
+
+	// ListAll 列出所有已存储的内容名称。
+	ListAll(ctx context.Context, chatID string) ([]string, error)
+
+	// SetGoal 设置当前目标。
+	SetGoal(ctx context.Context, chatID string, goal string) error
+
+	// GetGoal 获取当前目标。
+	GetGoal(ctx context.Context, chatID string) (string, error)
+
+	// AddMilestone 添加进度里程碑。
+	AddMilestone(ctx context.Context, chatID string, milestone Milestone) error
+
+	// GetMilestones 获取进度里程碑。
+	GetMilestones(ctx context.Context, chatID string) ([]Milestone, error)
+
+	// InjectContext 注入上下文到消息中（存储内容、目标、进展等）。
+	InjectContext(ctx context.Context, chatID string, messages []Message, retrievalRequests []string) ([]Message, error)
+
+	// BuildCapabilityReminder 构建能力提醒（智能提点）。
+	BuildCapabilityReminder(ctx context.Context, chatID string, capabilitiesNeeded []string) string
+}
+
+// WithContextManager 将 ContextManager 附加到 context。
+func WithContextManager(ctx context.Context, cm ContextManager) context.Context {
+	return context.WithValue(ctx, contextManagerKey{}, cm)
+}
+
+// GetContextManager 从 context 获取 ContextManager，如果没有则返回 nil。
+func GetContextManager(ctx context.Context) ContextManager {
+	if cm, ok := ctx.Value(contextManagerKey{}).(ContextManager); ok {
+		return cm
+	}
+	return nil
+}
+
+// ============================================================================
+// Planning-Execution Architecture Types
+// ============================================================================
+
+// PlanningRequest 规划请求，包含用户消息和上下文。
+type PlanningRequest struct {
+	UserMessage       string `json:"user_message"`        // 用户原始消息
+	CapabilitySummary string `json:"capability_summary"`  // AI 生成的能力总结
+	Context           string `json:"context,omitempty"`   // 额外上下文 (如之前的对话摘要)
+	ConversationID    string `json:"conversation_id,omitempty"` // 对话 ID
+}
+
+// Task 执行任务，描述计划中的一个具体任务。
+type Task struct {
+	ID            string         `json:"id"`                      // 任务唯一 ID
+	Description   string         `json:"description"`             // 任务描述
+	Capability    string         `json:"capability"`              // 需要使用的能力 ID
+	Input         map[string]any `json:"input,omitempty"`        // 输入参数
+	DependsOn     []string       `json:"depends_on,omitempty"`   // 依赖的任务 ID
+	ExpectedOutput string        `json:"expected_output,omitempty"` // 预期输出描述
+	Priority      int            `json:"priority,omitempty"`     // 优先级 (数字越大越优先)
+}
+
+// Plan 执行计划，包含完整的任务列表。
+type Plan struct {
+	Tasks          []Task `json:"tasks"`                    // 任务列表 (按依赖排序)
+	Summary        string `json:"summary"`                  // 计划摘要
+	EstimatedSteps int    `json:"estimated_steps,omitempty"` // 预估步骤数
+	Reasoning      string `json:"reasoning,omitempty"`      // 规划推理过程
+}
+
+// TaskResult 任务执行结果，保存任务的执行输出和摘要。
+type TaskResult struct {
+	TaskID    string    `json:"task_id"`     // 任务 ID
+	Output    string    `json:"output"`      // 完整输出
+	Summary   string    `json:"summary"`     // AI 精简的摘要 (供下个任务使用)
+	Status    string    `json:"status"`      // "success" | "failed" | "skipped"
+	Error     string    `json:"error,omitempty"` // 错误信息
+	Timestamp int64     `json:"timestamp"`   // 执行时间戳
+	Metadata  map[string]any `json:"metadata,omitempty"` // 额外元数据
+}
+
+// TaskExecutor 任务执行器接口，负责执行任务并管理结果。
+type TaskExecutor interface {
+	// Execute 执行计划并返回最终结果。
+	Execute(ctx context.Context, plan *Plan) (string, error)
+	// GetResult 获取特定任务的执行结果。
+	GetResult(taskID string) (*TaskResult, bool)
+}
+
+// Planner 任务规划器接口，负责生成执行计划。
+type Planner interface {
+	// Plan 根据用户请求生成执行计划。
+	Plan(ctx context.Context, req *PlanningRequest) (*Plan, error)
+}
+
+// CapabilityExtractor 能力提取器接口，负责从系统中提取所有能力。
+// 使用 interface{} 作为返回类型避免循环导入。
+type CapabilityExtractor interface {
+	// ExtractCapabilities 提取所有系统能力并生成总结。
+	ExtractCapabilities(ctx context.Context) (interface{}, error)
+	// GetRegistry 获取缓存的能力注册表。
+	GetRegistry() (interface{}, error)
+	// Refresh 强制刷新能力注册表。
+	Refresh(ctx context.Context) error
+	// GetSummary 获取能力总结。
+	GetSummary() (string, error)
+}

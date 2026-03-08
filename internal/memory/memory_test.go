@@ -10,7 +10,7 @@ import (
 
 func TestInMemoryStore_SaveLoad(t *testing.T) {
 	cfg := config.MemoryConfig{MaxHistory: 10}
-	store := New(cfg).(*InMemoryStore)
+	store := New(cfg, nil).(*InMemoryStore)
 	ctx := context.Background()
 
 	// Save and load
@@ -28,7 +28,7 @@ func TestInMemoryStore_SaveLoad(t *testing.T) {
 }
 
 func TestInMemoryStore_EmptyChatID(t *testing.T) {
-	store := New(config.MemoryConfig{})
+	store := New(config.MemoryConfig{}, nil)
 	ctx := context.Background()
 	msg := agent.Message{Role: "user", Content: "x"}
 	if err := store.Save(ctx, "", msg); err == nil {
@@ -53,7 +53,7 @@ func TestInMemoryStore_EmptyChatID(t *testing.T) {
 
 func TestInMemoryStore_MaxHistory(t *testing.T) {
 	cfg := config.MemoryConfig{MaxHistory: 3}
-	store := New(cfg).(*InMemoryStore)
+	store := New(cfg, nil).(*InMemoryStore)
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		store.Save(ctx, "c1", agent.Message{Role: "user", Content: string(rune('0' + i))})
@@ -68,7 +68,7 @@ func TestInMemoryStore_MaxHistory(t *testing.T) {
 }
 
 func TestInMemoryStore_Search(t *testing.T) {
-	store := New(config.MemoryConfig{MaxHistory: 50}).(*InMemoryStore)
+	store := New(config.MemoryConfig{MaxHistory: 50}, nil).(*InMemoryStore)
 	ctx := context.Background()
 	store.Save(ctx, "c1", agent.Message{Role: "user", Content: "hello world"})
 	store.Save(ctx, "c1", agent.Message{Role: "assistant", Content: "hi there"})
@@ -84,7 +84,7 @@ func TestInMemoryStore_Search(t *testing.T) {
 
 func TestInMemoryStore_Compact(t *testing.T) {
 	cfg := config.MemoryConfig{MaxHistory: 3}
-	store := New(cfg).(*InMemoryStore)
+	store := New(cfg, nil).(*InMemoryStore)
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		store.Save(ctx, "c1", agent.Message{Role: "user", Content: string(rune('0' + i))})
@@ -99,7 +99,7 @@ func TestInMemoryStore_Compact(t *testing.T) {
 }
 
 func TestInMemoryStore_ContextCancel(t *testing.T) {
-	store := New(config.MemoryConfig{})
+	store := New(config.MemoryConfig{}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := store.Load(ctx, "c1", 5)
@@ -109,7 +109,7 @@ func TestInMemoryStore_ContextCancel(t *testing.T) {
 }
 
 func TestInMemoryStore_Concurrent(t *testing.T) {
-	store := New(config.MemoryConfig{MaxHistory: 100})
+	store := New(config.MemoryConfig{MaxHistory: 100}, nil)
 	ctx := context.Background()
 	done := make(chan struct{})
 	go func() {
@@ -129,7 +129,7 @@ func TestInMemoryStore_Concurrent(t *testing.T) {
 }
 
 func TestInMemoryStore_GetCompactSummary(t *testing.T) {
-	store := New(config.MemoryConfig{}).(*InMemoryStore)
+	store := New(config.MemoryConfig{}, nil).(*InMemoryStore)
 	ctx := context.Background()
 	summary, err := store.GetCompactSummary(ctx, "c1")
 	if err != nil {
@@ -141,7 +141,7 @@ func TestInMemoryStore_GetCompactSummary(t *testing.T) {
 }
 
 func TestInMemoryStore_SaveLoadLongTerm(t *testing.T) {
-	store := New(config.MemoryConfig{}).(*InMemoryStore)
+	store := New(config.MemoryConfig{}, nil).(*InMemoryStore)
 	ctx := context.Background()
 	if err := store.SaveLongTerm(ctx, "c1", "content", "memory"); err != nil {
 		t.Fatalf("SaveLongTerm: %v", err)
@@ -316,7 +316,7 @@ func TestCosineSimilarity(t *testing.T) {
 }
 
 func TestInMemoryStore_SummaryMemory(t *testing.T) {
-	store := New(config.MemoryConfig{}).(*InMemoryStore)
+	store := New(config.MemoryConfig{}, nil).(*InMemoryStore)
 	ctx := context.Background()
 
 	// Empty messages

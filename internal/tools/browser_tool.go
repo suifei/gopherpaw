@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +21,121 @@ import (
 	"go.uber.org/zap"
 )
 
-const browserIdleTimeout = 60 * time.Minute
+const (
+	browserIdleTimeout = 60 * time.Minute
+	// chromeBinEnv 是环境变量名，用于指定 Chrome 可执行文件路径
+	chromeBinEnv = "CHROME_BIN"
+	// runningInContainerEnv 是环境变量名，用于显式指示运行在容器中
+	runningInContainerEnv = "GOPHERPAW_RUNNING_IN_CONTAINER"
+)
+
+// chromePaths 定义了各平台常见的 Chrome/Chromium 路径
+var chromePaths = map[string][]string{
+	"linux": {
+		"/usr/bin/google-chrome",
+		"/usr/bin/google-chrome-stable",
+		"/usr/bin/chromium",
+		"/usr/bin/chromium-browser",
+		"/usr/lib/chromium/chromium",
+		"/snap/bin/chromium",
+		"/usr/bin/google-chrome-beta",
+		"/usr/bin/google-chrome-dev",
+		// ChromeOS 特别路径
+		"/opt/google/chrome/google-chrome",
+	},
+	"darwin": {
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+		"/Applications/Chromium.app/Contents/MacOS/Chromium",
+		"/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+		"/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev",
+		"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+	},
+	"windows": {
+		"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+		"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+		"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+		"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+		"C:\\Program Files\\Chromium\\Application\\chrome.exe",
+	},
+}
+
+// findChromeExecutable 查找系统中已安装的 Chrome/Chromium 浏览器。
+// 按优先级顺序检查：
+// 1. 环境变量 CHROME_BIN
+// 2. 系统常见路径
+// 返回找到的第一个有效可执行文件路径，如果未找到则返回空字符串。
+func findChromeExecutable() string {
+	// 1. 检查环境变量
+	if envPath := os.Getenv(chromeBinEnv); envPath != "" {
+		if _, err := os.Stat(envPath); err == nil {
+			logger.L().Debug("using chrome from environment variable",
+				zap.String("env", chromeBinEnv),
+				zap.String("path", envPath))
+			return envPath
+		}
+		logger.L().Warn("chrome path from environment variable not accessible",
+			zap.String("env", chromeBinEnv),
+			zap.String("path", envPath))
+	}
+
+	// 2. 扫描系统常见路径
+	platform := runtime.GOOS
+	candidates, ok := chromePaths[platform]
+	if !ok {
+		// 未知平台，尝试 Linux 路径作为回退
+		candidates = chromePaths["linux"]
+	}
+
+	for _, path := range candidates {
+		// Windows 路径可能包含环境变量
+		if strings.Contains(path, "%") {
+			path = os.ExpandEnv(path)
+		}
+		if fileInfo, err := os.Stat(path); err == nil {
+			// 确保是可执行文件（不是目录）
+			if !fileInfo.IsDir() {
+				logger.L().Debug("found chrome in system path", zap.String("path", path))
+				return path
+			}
+		}
+	}
+
+	logger.L().Debug("no chrome executable found in system paths")
+	return ""
+}
+
+// isRunningInContainer 检测当前进程是否运行在容器环境（Docker/Kubernetes）中。
+// 按优先级检查：
+// 1. 环境变量 GOPHERPAW_RUNNING_IN_CONTAINER（设为 1/true/yes）
+// 2. /.dockerenv 文件存在
+// 3. /proc/1/cgroup 包含 "docker" 或 "kubepods"
+func isRunningInContainer() bool {
+	// 1. 检查环境变量（显式设置）
+	envVal := strings.ToLower(os.Getenv(runningInContainerEnv))
+	if envVal == "1" || envVal == "true" || envVal == "yes" {
+		logger.L().Debug("detected container environment from env variable",
+			zap.String("env", runningInContainerEnv))
+		return true
+	}
+
+	// 2. 检查 /.dockerenv 文件
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		logger.L().Debug("detected container environment from /.dockerenv")
+		return true
+	}
+
+	// 3. 检查 /proc/1/cgroup
+	cgroupData, err := os.ReadFile("/proc/1/cgroup")
+	if err == nil {
+		content := strings.ToLower(string(cgroupData))
+		if strings.Contains(content, "docker") || strings.Contains(content, "kubepods") || strings.Contains(content, "containerd") {
+			logger.L().Debug("detected container environment from /proc/1/cgroup")
+			return true
+		}
+	}
+
+	return false
+}
 
 type pageContext struct {
 	ctx    context.Context
@@ -53,12 +168,40 @@ func (bs *browserState) ensureBrowser(headless bool) error {
 		return nil
 	}
 
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+	// 构建浏览器选项
+	opts := []chromedp.ExecAllocatorOption{
 		chromedp.Flag("headless", headless),
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
-	)
+		// 禁用 devshm 使用（容器环境可能需要）
+		chromedp.Flag("disable-dev-shm-usage", true),
+		// 设置浏览器语言为简体中文（操作系统级别的区域设置）
+		chromedp.Flag("lang", "zh-CN"),
+		chromedp.UserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+	}
+
+	// 1. 尝试查找系统浏览器
+	chromePath := findChromeExecutable()
+	if chromePath != "" {
+		opts = append(opts, chromedp.ExecPath(chromePath))
+		logger.L().Info("using detected chrome executable",
+			zap.String("path", chromePath))
+	} else {
+		logger.L().Info("no chrome executable detected, using system default")
+	}
+
+	// 2. 容器环境特殊处理
+	if isRunningInContainer() {
+		opts = append(opts,
+			chromedp.Flag("no-sandbox", true),
+			chromedp.Flag("disable-setuid-sandbox", true),
+		)
+		logger.L().Info("container environment detected, added no-sandbox flags")
+	}
+
+	// 添加默认选项（必须在自定义选项之后）
+	opts = append(chromedp.DefaultExecAllocatorOptions[:], opts...)
 
 	bs.allocCtx, bs.allocCancel = chromedp.NewExecAllocator(context.Background(), opts...)
 	bs.browserCtx, bs.browserCanc = chromedp.NewContext(bs.allocCtx)
@@ -74,7 +217,10 @@ func (bs *browserState) ensureBrowser(headless bool) error {
 
 	go bs.idleWatcher()
 
-	logger.L().Info("browser started (chromedp)", zap.Bool("headless", headless))
+	logger.L().Info("browser started (chromedp)",
+		zap.Bool("headless", headless),
+		zap.String("chrome_path", chromePath),
+		zap.Bool("in_container", isRunningInContainer()))
 	return nil
 }
 
@@ -385,9 +531,22 @@ func (t *BrowserTool) doClick(args browserArgs) (*agent.ToolResult, error) {
 	if args.Selector == "" {
 		return nil, fmt.Errorf("selector is required for click")
 	}
-	if err := chromedp.Run(pc.ctx, chromedp.Click(args.Selector, chromedp.ByQuery)); err != nil {
+
+	logger.L().Debug("browser click", zap.String("selector", args.Selector))
+
+	// 设置超时上下文，避免无限等待
+	ctx, cancel := context.WithTimeout(pc.ctx, 30*time.Second)
+	defer cancel()
+
+	// 先等待元素可见，再执行点击
+	if err := chromedp.Run(ctx,
+		chromedp.WaitVisible(args.Selector, chromedp.ByQuery),
+		chromedp.Click(args.Selector, chromedp.ByQuery),
+	); err != nil {
 		return nil, fmt.Errorf("click %q: %w", args.Selector, err)
 	}
+
+	logger.L().Debug("browser click done", zap.String("selector", args.Selector))
 	return &agent.ToolResult{Text: fmt.Sprintf("Clicked %s", args.Selector)}, nil
 }
 

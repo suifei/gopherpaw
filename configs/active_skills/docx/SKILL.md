@@ -1,6 +1,30 @@
 ---
 name: docx
 description: "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of \"Word doc\", \"word document\", \".docx\", or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx files, inserting or replacing images in documents, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a \"report\", \"memo\", \"letter\", \"template\", or similar deliverable as a Word or .docx file, use this skill. Do NOT use for PDFs, spreadsheets, Google Docs, or general coding tasks unrelated to document generation."
+keywords:
+  - word
+  - docx
+  - doc
+  - document
+  - office
+  - microsoft
+  - 报告
+  - 文档
+  - 格式化
+  - 模板
+  - 页眉
+  - 页脚
+  - table
+  - 表格
+  - heading
+  - 标题
+  - footnote
+  - 脚注
+  - .doc
+  - .docx
+  - letter
+  - memo
+  - template
 license: Proprietary. LICENSE.txt has complete terms
 ---
 
@@ -119,19 +143,19 @@ size: {
 
 ### Styles (Override Built-in Headings)
 
-Use Arial as the default font (universally supported). Keep titles black for readability.
+Use 宋体 as the default font (universally supported). Keep titles black for readability.
 
 ```javascript
 const doc = new Document({
   styles: {
-    default: { document: { run: { font: "Arial", size: 24 } } }, // 12pt default
+    default: { document: { run: { font: "宋体", size: 24 } } }, // 12pt default
     paragraphStyles: [
       // IMPORTANT: Use exact IDs to override built-in styles
       { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: 32, bold: true, font: "Arial" },
+        run: { size: 32, bold: true, font: "宋体" },
         paragraph: { spacing: { before: 240, after: 240 }, outlineLevel: 0 } }, // outlineLevel required for TOC
       { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-        run: { size: 28, bold: true, font: "Arial" },
+        run: { size: 28, bold: true, font: "宋体" },
         paragraph: { spacing: { before: 180, after: 180 }, outlineLevel: 1 } },
     ]
   },

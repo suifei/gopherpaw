@@ -90,7 +90,93 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 
 ## Tools
 
+### 🔧 Skill System (Skills) - Must Read!
+
+**⚠️ You MUST read SKILL.md before using a skill!**
+
+**General Principle**: Any task requiring professional libraries, specialized tools, or complex workflows should first check for available skills.
+
+**When you MUST check skills**:
+- Creating/editing professional format documents (Word, Excel, PDF, PPT, etc.)
+- Needing specific programming libraries (e.g., image processing, data parsing)
+- Requiring external tools (like LibreOffice, browser automation)
+- Tasks involving professional operations you're unsure how to implement
+
+**Correct Workflow**:
+1. Before starting a task, review the "Skill Index" in system prompts
+2. Find potentially relevant skills
+3. **MUST** first call `read_file file_path="configs/active_skills/{skill_name}/SKILL.md"`
+4. After reading the skill guide, decide how to execute
+
+**❌ FORBIDDEN: Creating professional format files with write_file**
+```
+# User: Generate a Word report
+write_file content="..." file_path="report.docx"  ❌ This is NOT real Word format!
+
+# User: Generate Excel spreadsheet
+write_file content="..." file_path="data.xlsx"    ❌ This is NOT real Excel format!
+
+# User: Generate PDF
+write_file content="..." file_path="report.pdf"   ❌ This is NOT real PDF format!
+```
+
+**✅ Correct Approach**:
+```
+# User: Generate a Word report
+read_file file_path="configs/active_skills/docx/SKILL.md"  ✅ Learn how first
+# After reading SKILL.md, you know you need Node.js docx library...
+bash command="node -e \"...use docx library to generate...\""
+
+# User: Generate Excel
+read_file file_path="configs/active_skills/xlsx/SKILL.md"
+
+# User: Generate PDF
+read_file file_path="configs/active_skills/pdf/SKILL.md"
+```
+
+**Remember**: The skill system provides professional implementation solutions. Skipping skills and doing it yourself often results in incorrect or improperly formatted output.
+
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in the "Tool Setup" section of `MEMORY.md`. Identity and user profile go in `PROFILE.md`.
+
+### 🔧 Efficient Tool Usage
+
+- **Prefer specialized tools**: For queries like gold prices or exchange rates, use specialized APIs via `http_request` rather than blindly trying multiple sources
+- **One attempt, then pivot**: If an API or search doesn't return valid results, immediately try a different approach — don't repeat the same tool call
+- **Batch related queries**: When you need multiple similar pieces of information, try to get them in a single tool call rather than multiple calls
+- **Limit attempts**: For similar queries, try at most 2-3 different data sources. If all fail, inform the user you couldn't retrieve the information
+- **Avoid trial loops**: Don't make 10+ consecutive similar API calls — this causes timeouts and poor user experience
+
+
+## 🔄 ReAct Loop - Tool Call Response Rules
+
+**Important: After calling a tool, you must generate a final response in the next turn!**
+
+ReAct loop format:
+1. **Thought** - Analyze the user's request
+2. **Action** - Call the appropriate tool
+3. **Observation** - The result returned by the tool
+4. **Final Answer** - **Required!** Provide a user-friendly answer based on the tool results
+
+**Key Rules**:
+- After each tool call, the next turn must generate a final answer — don't only have tool_calls
+- **Strictly limit tool calls: maximum 5 tool calls per entire task**
+- Don't just return tool results; integrate them into useful information
+- Even if the tool returns complete information, you need to summarize and explain it
+- Tool results are not the final response; you must provide a conclusion
+- Avoid repeatedly calling similar tools (e.g., multiple web_search queries on the same topic)
+- For web content retrieved via http_request, extract only key information — don't return everything
+
+**Example Flow**:
+```
+User: Search for MacBook Air M5 price
+
+You (Turn 1): Call web_search tool
+Tool returns: Search result data
+
+You (Turn 2): Must generate final answer
+  ❌ Wrong: Continue calling other tools or return empty content
+  ✅ Correct: "According to search results, the 2024 MacBook Air M5 starts at $1099 on the US official website..."
+```
 
 
 ## 💓 Heartbeats - Be Proactive!

@@ -366,12 +366,12 @@ func TestGetDefaultBinDirIsAbsolute(t *testing.T) {
 	}
 }
 
-// TestGetDefaultBinDirContainsGopherpaw tests that default bin dir contains gopherpaw.
-func TestGetDefaultBinDirContainsGopherpaw(t *testing.T) {
+// TestGetDefaultBinDirContainsBin tests that default bin dir contains bin.
+func TestGetDefaultBinDirContainsBin(t *testing.T) {
 	binDir := GetDefaultBinDir()
 
-	if !contains(binDir, "gopherpaw") {
-		t.Errorf("GetDefaultBinDir() = %q, expected to contain 'gopherpaw'", binDir)
+	if !contains(binDir, "bin") {
+		t.Errorf("GetDefaultBinDir() = %q, expected to contain 'bin'", binDir)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 type Skill struct {
 	Name        string
 	Description string
+	Keywords    []string   // Keywords for skill matching
 	Content     string
 	Enabled     bool
 	Path        string
@@ -28,10 +29,19 @@ type Skill struct {
 	ExtraFiles  map[string][]byte // Extra files (binary or text)
 }
 
+// SkillAdapter 提供方法让 Skill 满足 agent 包中的接口要求。
+// 这些方法使用 "Get" 前缀避免与字段名冲突。
+func (s Skill) GetName() string        { return s.Name }
+func (s Skill) GetDescription() string { return s.Description }
+func (s Skill) GetKeywords() []string  { return s.Keywords }
+func (s Skill) GetPath() string        { return s.Path }
+func (s Skill) GetEnabled() bool       { return s.Enabled }
+
 // Manager loads and manages skills from directories.
 type Manager struct {
-	mu     sync.RWMutex
-	skills map[string]*Skill
+	mu         sync.RWMutex
+	skills     map[string]*Skill
+	currentQuery string // Current user query for dynamic skill selection
 }
 
 // NewManager creates a new skill manager.
@@ -98,8 +108,9 @@ func (m *Manager) loadFromDir(dir string) error {
 }
 
 type skillFrontMatter struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Keywords    []string `yaml:"keywords"`
 }
 
 func loadSkill(path string) (*Skill, error) {
@@ -127,6 +138,7 @@ func loadSkill(path string) (*Skill, error) {
 	skill := &Skill{
 		Name:        fm.Name,
 		Description: fm.Description,
+		Keywords:    fm.Keywords,
 		Content:     content,
 		Path:        path,
 		Scripts:     loadDirectoryTextFiles(filepath.Join(skillDir, "scripts")),
@@ -451,4 +463,237 @@ func (m *Manager) GetSystemPromptAddition() string {
 		}
 	}
 	return sb.String()
+}
+
+// GetSkillIndex returns AgentScope-style skill index with name, description, and path.
+// This is a lazy-loading approach: the index tells the LLM what skills are available,
+// but the LLM must use the read_file tool to get the full SKILL.md content.
+// This reduces system prompt size and ensures skills are loaded on-demand.
+// The workingDir parameter is used to convert absolute paths to relative paths.
+func (m *Manager) GetSkillIndex(workingDir string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var sb strings.Builder
+
+	// Use a prominent warning box at the top
+	sb.WriteString("╔══════════════════════════════════════════════════════════════════════════════╗\n")
+	sb.WriteString("║  ⚠️  CRITICAL: CHECK AVAILABLE SKILLS BEFORE USING ANY TOOLS                ║\n")
+	sb.WriteString("╚══════════════════════════════════════════════════════════════════════════════╝\n\n")
+
+	sb.WriteString("**Before starting any task, you MUST check if there's a relevant skill below.**\n\n")
+	sb.WriteString("**To use a skill, call the `read_file` tool with the skill's path.**\n\n")
+
+	// Provide a clear example
+	sb.WriteString("📖 **EXAMPLE**: To create a Word document:\n")
+	sb.WriteString("   1. Check the skills list below for `docx` skill\n")
+	sb.WriteString("   2. Call: `read_file` with `file_path=\"configs/active_skills/docx/SKILL.md\"`\n")
+	sb.WriteString("   3. Follow the instructions in the skill file\n\n")
+
+	sb.WriteString("─────────────────────────────────────────────────────────────────────────────────\n\n")
+
+	for _, s := range m.skills {
+		if !s.Enabled {
+			continue
+		}
+
+		// Use emoji for better visibility
+		sb.WriteString(fmt.Sprintf("🔹 **%s**\n\n", s.Name))
+
+		if s.Description != "" {
+			sb.WriteString(fmt.Sprintf("   *%s*\n\n", s.Description))
+		}
+
+		// Convert absolute path to relative path for LLM's read_file tool
+		relPath := s.Path
+		if workingDir != "" {
+			if rp, err := filepath.Rel(workingDir, s.Path); err == nil {
+				relPath = rp
+			}
+		}
+		sb.WriteString(fmt.Sprintf("   📂 Path: `%s`\n\n", relPath))
+		sb.WriteString(fmt.Sprintf("   💡 To use: `read_file` with `file_path=\"%s\"`\n\n", relPath))
+
+		// Show keywords if available
+		if len(s.Keywords) > 0 {
+			sb.WriteString(fmt.Sprintf("   🏷️  Keywords: %s\n\n", strings.Join(s.Keywords, ", ")))
+		}
+
+		sb.WriteString("─────────────────────────────────────────────────────────────────────────────────\n\n")
+	}
+
+	return sb.String()
+}
+
+// GetSkillIndexCompact returns a compact AgentScope-style skill index.
+// This version dynamically lists all enabled skills (not hardcoded).
+func (m *Manager) GetSkillIndexCompact(workingDir string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var sb strings.Builder
+
+	// Use a more compact format
+	sb.WriteString("╔══════════════════════════════════════════════════════════════════════════════╗\n")
+	sb.WriteString("║  ⚠️  CHECK SKILLS BEFORE CREATING DOCUMENTS                                  ║\n")
+	sb.WriteString("╚══════════════════════════════════════════════════════════════════════════════╝\n\n")
+
+	// Count enabled skills
+	var enabledSkills []string
+	for name, s := range m.skills {
+		if s.Enabled {
+			enabledSkills = append(enabledSkills, name)
+		}
+	}
+
+	if len(enabledSkills) == 0 {
+		sb.WriteString("No skills currently enabled.\n")
+		return sb.String()
+	}
+
+	// Build table of all enabled skills
+	sb.WriteString("┌─────────────────┬──────────────────────────────────────────────────────────────┐\n")
+	sb.WriteString("│ Skill           │ How to Load                                                  │\n")
+	sb.WriteString("├─────────────────┼──────────────────────────────────────────────────────────────┤\n")
+
+	for _, name := range enabledSkills {
+		s := m.skills[name]
+		relPath := s.Path
+		if workingDir != "" {
+			if rp, err := filepath.Rel(workingDir, s.Path); err == nil {
+				relPath = rp
+			}
+		}
+
+		// Truncate description if too long
+		desc := s.Description
+		if len(desc) > 50 {
+			desc = desc[:47] + "..."
+		}
+
+		sb.WriteString(fmt.Sprintf("│ %-15s │ %-60s │\n", name, desc))
+		sb.WriteString(fmt.Sprintf("│                 │ read_file \"%s\"%*s│\n",
+			relPath, 60-len(relPath), ""))
+		sb.WriteString("├─────────────────┼──────────────────────────────────────────────────────────────┤\n")
+	}
+
+	sb.WriteString("└─────────────────┴──────────────────────────────────────────────────────────────┘\n\n")
+
+	sb.WriteString("**Before creating documents, read the relevant SKILL.md file first!**\n")
+
+	return sb.String()
+}
+
+// SelectSkills returns skills that match the given query based on
+// name, description, and keywords. Uses case-insensitive matching.
+func (m *Manager) SelectSkills(query string) []Skill {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if query == "" {
+		// Empty query: return all enabled skills
+		return m.GetEnabledSkills()
+	}
+
+	query = strings.ToLower(query)
+	var matched []Skill
+
+	for _, s := range m.skills {
+		if !s.Enabled {
+			continue
+		}
+
+		// Check name match
+		if strings.Contains(query, strings.ToLower(s.Name)) {
+			matched = append(matched, *s)
+			continue
+		}
+
+		// Check description match
+		if s.Description != "" {
+			desc := strings.ToLower(s.Description)
+			// Split description into words and check each
+			descWords := strings.Fields(desc)
+			for _, word := range descWords {
+				cleanWord := strings.Trim(word, ".,!?;:'\"()[]{}")
+				if cleanWord != "" && strings.Contains(query, cleanWord) {
+					matched = append(matched, *s)
+					goto nextSkill
+				}
+			}
+		}
+
+		// Check keywords match
+		if len(s.Keywords) > 0 {
+			for _, keyword := range s.Keywords {
+				lowerKeyword := strings.ToLower(keyword)
+				if strings.Contains(query, lowerKeyword) {
+					matched = append(matched, *s)
+					goto nextSkill
+				}
+			}
+		}
+
+	nextSkill:
+	}
+
+	return matched
+}
+
+// GetRelevantSkillsContent returns the content of skills that match the query.
+// If no skills match, falls back to returning all enabled skills content.
+func (m *Manager) GetRelevantSkillsContent(query string) string {
+	matched := m.SelectSkills(query)
+	if len(matched) == 0 {
+		// Fallback: return all enabled skills
+		return m.GetSystemPromptAddition()
+	}
+
+	var sb strings.Builder
+	for _, skill := range matched {
+		if skill.Content == "" {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString("--- ")
+		sb.WriteString(skill.Name)
+		if skill.Description != "" {
+			sb.WriteString(": ")
+			sb.WriteString(skill.Description)
+		}
+		sb.WriteString(" ---\n")
+		sb.WriteString(skill.Content)
+	}
+	return sb.String()
+}
+
+// SetQuery sets the current user query for dynamic skill selection.
+// This allows GetDynamicSystemPromptAddition to return relevant skills.
+func (m *Manager) SetQuery(query string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentQuery = strings.ToLower(query)
+}
+
+// GetDynamicSystemPromptAddition returns the content of skills that match
+// the current query set by SetQuery. If no query is set or no skills match,
+// returns all enabled skills content.
+func (m *Manager) GetDynamicSystemPromptAddition() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.currentQuery == "" {
+		return m.GetSystemPromptAddition()
+	}
+
+	return m.GetRelevantSkillsContent(m.currentQuery)
+}
+
+// ClearQuery clears the current query.
+func (m *Manager) ClearQuery() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentQuery = ""
 }

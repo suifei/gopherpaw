@@ -25,6 +25,7 @@ type Config struct {
 	Skills          SkillsConfig        `mapstructure:"skills" yaml:"skills"`
 	Runtime         RuntimeConfig       `mapstructure:"runtime" yaml:"runtime"`
 	MCP             MCPConfig           `mapstructure:"mcp" yaml:"mcp"`
+	Locale          LocaleConfig        `mapstructure:"locale" yaml:"locale"`
 	WorkingDir      string              `mapstructure:"working_dir" yaml:"working_dir"`
 	MediaDir        string              `mapstructure:"media_dir" yaml:"media_dir"`
 	ShowToolDetails bool                `mapstructure:"show_tool_details" yaml:"show_tool_details"`
@@ -59,6 +60,13 @@ type NodeConfig struct {
 	AutoInstall bool   `mapstructure:"auto_install" yaml:"auto_install"` // Auto install missing packages
 }
 
+// LocaleConfig holds regional and language settings (OS-level locale configuration).
+type LocaleConfig struct {
+	Language string `mapstructure:"language" yaml:"language"` // Language code (e.g., "zh-CN", "en-US")
+	Region   string `mapstructure:"region" yaml:"region"`     // Region code (e.g., "CN", "US")
+	Timezone string `mapstructure:"timezone" yaml:"timezone"` // Timezone (e.g., "Asia/Shanghai", "America/New_York")
+}
+
 // SkillsConfig holds skill directory settings.
 type SkillsConfig struct {
 	ActiveDir     string `mapstructure:"active_dir" yaml:"active_dir"`
@@ -78,6 +86,25 @@ type AgentConfig struct {
 	Defaults     AgentDefaultsConfig `mapstructure:"defaults" yaml:"defaults"`
 	Running      AgentRunningConfig  `mapstructure:"running" yaml:"running"`
 	Language     string              `mapstructure:"language" yaml:"language"`
+	Planning     *PlanningConfig     `mapstructure:"planning" yaml:"planning"` // 规划模式配置
+}
+
+// PlanningConfig 规划模式配置。
+type PlanningConfig struct {
+	// 是否启用规划模式（默认：false）
+	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
+	// 执行模式: "react" | "planning" | "auto"（默认：react）
+	ExecutionMode string `mapstructure:"execution_mode" yaml:"execution_mode"`
+	// 能力缓存刷新间隔（小时，默认：24）
+	CapabilityCacheTTL int `mapstructure:"capability_cache_ttl" yaml:"capability_cache_ttl"`
+	// 是否启用 AI 能力总结（默认：true）
+	AISummaryEnabled bool `mapstructure:"ai_summary_enabled" yaml:"ai_summary_enabled"`
+	// 简单任务阈值（少于 N 个工具调用则用 ReAct，默认：3）
+	SimpleTaskThreshold int `mapstructure:"simple_task_threshold" yaml:"simple_task_threshold"`
+	// 是否在规划前显示计划给用户确认（默认：false）
+	ConfirmPlan bool `mapstructure:"confirm_plan" yaml:"confirm_plan"`
+	// 最大计划步骤数（默认：20）
+	MaxPlanSteps int `mapstructure:"max_plan_steps" yaml:"max_plan_steps"`
 }
 
 // AgentDefaultsConfig holds default agent configuration (e.g., heartbeat).
@@ -90,6 +117,9 @@ type AgentRunningConfig struct {
 	MaxTurns         int    `mapstructure:"max_turns" yaml:"max_turns"`
 	MaxInputLength   int    `mapstructure:"max_input_length" yaml:"max_input_length"`
 	NamesakeStrategy string `mapstructure:"namesake_strategy" yaml:"namesake_strategy"`
+	// 执行模式: "react" | "planning" | "auto"（默认：react）
+	// 注意：如果 agent.planning.execution_mode 也设置了，优先使用 agent.planning.execution_mode
+	ExecutionMode    string `mapstructure:"execution_mode" yaml:"execution_mode"`
 }
 
 // ModelSlot defines a named model with optional provider/credential overrides and capability tags.
@@ -372,7 +402,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("agent.defaults.heartbeat.target", "main")
 	v.SetDefault("agent.running.max_turns", 20)
 	v.SetDefault("agent.running.max_input_length", 131072)
+	v.SetDefault("agent.running.execution_mode", "react")
 	v.SetDefault("agent.language", "zh")
+	// Planning defaults
+	v.SetDefault("agent.planning.enabled", false)
+	v.SetDefault("agent.planning.execution_mode", "react")
+	v.SetDefault("agent.planning.capability_cache_ttl", 24)
+	v.SetDefault("agent.planning.ai_summary_enabled", true)
+	v.SetDefault("agent.planning.simple_task_threshold", 3)
+	v.SetDefault("agent.planning.confirm_plan", false)
+	v.SetDefault("agent.planning.max_plan_steps", 20)
 	v.SetDefault("llm.provider", "openai")
 	v.SetDefault("llm.model", "gpt-4o-mini")
 	v.SetDefault("llm.ollama_url", "http://localhost:11434")
@@ -400,6 +439,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("runtime.node.bun_path", "")
 	v.SetDefault("runtime.node.node_path", "")
 	v.SetDefault("runtime.node.auto_install", true)
+	// Locale defaults (OS-level regional settings)
+	v.SetDefault("locale.language", "zh-CN")
+	v.SetDefault("locale.region", "CN")
+	v.SetDefault("locale.timezone", "Asia/Shanghai")
 	// UI defaults
 	v.SetDefault("show_tool_details", true)
 }
@@ -460,6 +503,11 @@ func defaultConfig() *Config {
 				Runtime:     "bun",
 				AutoInstall: true,
 			},
+		},
+		Locale: LocaleConfig{
+			Language: "zh-CN",
+			Region:   "CN",
+			Timezone: "Asia/Shanghai",
 		},
 	}
 }
@@ -635,7 +683,7 @@ func Validate(cfg *Config) error {
 }
 
 // ResolveWorkingDir returns the effective working directory (package-level).
-// Priority: GOPHERPAW_WORKING_DIR env > config working_dir > ~/.gopherpaw/
+// Priority: GOPHERPAW_WORKING_DIR env > config working_dir > . (current directory)
 func ResolveWorkingDir(cfgWorkingDir string) string {
 	if v := os.Getenv(envPrefix + "WORKING_DIR"); v != "" {
 		return expandPath(v)
@@ -643,8 +691,7 @@ func ResolveWorkingDir(cfgWorkingDir string) string {
 	if cfgWorkingDir != "" {
 		return expandPath(cfgWorkingDir)
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gopherpaw")
+	return "."
 }
 
 // ResolveMediaDir returns the effective media directory.
@@ -699,14 +746,10 @@ func LoadProviders(path string) (*ProvidersConfig, error) {
 	return &cfg, nil
 }
 
-// ResolveAgentWorkingDir returns the agent working directory. Empty means ~/.gopherpaw.
+// ResolveAgentWorkingDir returns the agent working directory. Empty means . (current directory).
 func (c *AgentConfig) ResolveWorkingDir() string {
 	wd := c.WorkingDir
 	if wd == "" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			return filepath.Join(home, ".gopherpaw")
-		}
 		return "."
 	}
 	if strings.HasPrefix(wd, "~/") {
@@ -735,13 +778,18 @@ func (c *MemoryConfig) ResolveDBPath() string {
 }
 
 // GetSecretDir returns the secret directory path for storing sensitive data.
-// Priority: GOPHERPAW_SECRET_DIR env > {working_dir}.secret
+// Priority: GOPHERPAW_SECRET_DIR env > .gopherpaw.secret (hidden in current dir)
 func GetSecretDir() string {
 	if v := os.Getenv(envPrefix + "SECRET_DIR"); v != "" {
 		return expandPath(v)
 	}
-	// Default: {working_dir}.secret
+	// Default: .gopherpaw.secret (hidden in current directory)
+	// For backward compatibility with old ~/.gopherpaw.secret behavior
 	workingDir := ResolveWorkingDir("")
+	if workingDir == "." {
+		return ".gopherpaw.secret"
+	}
+	// For custom working dirs, create a sibling .secret directory
 	return workingDir + ".secret"
 }
 

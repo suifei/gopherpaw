@@ -316,7 +316,8 @@ func TestWebSearchTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute empty query: %v", err)
 	}
-	if !strings.Contains(out, "Error") && !strings.Contains(out, "No") {
+	// 检查中文或英文错误消息
+	if !strings.Contains(out, "错误") && !strings.Contains(out, "Error") && !strings.Contains(out, "No") {
 		t.Errorf("Execute empty query: got %q", out)
 	}
 	// Invalid JSON

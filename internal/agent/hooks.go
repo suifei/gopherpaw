@@ -5,10 +5,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/suifei/gopherpaw/pkg/logger"
 	"go.uber.org/zap"
 )
+
+// SkillContentProvider is a function that returns skill content for a given query.
+type SkillContentProvider func(query string) string
 
 // Hook is a function invoked before each ReAct reasoning step.
 // It may modify the messages slice in-place or return an error to abort.
@@ -144,8 +148,80 @@ func isFirstUserInteraction(messages []Message) bool {
 func BuildBootstrapGuidance(language string) string {
 	switch language {
 	case "zh":
-		return `这是你的第一次启动。请阅读工作目录下的 BOOTSTRAP.md 文件，按照其中的指示完成自我介绍和初始化设置。完成后将结果写入 PROFILE.md。`
+		return `# 🌟 引导模式已激活
+
+**重要：你正处于首次设置模式。**
+
+你的工作目录中存在 ` + "`BOOTSTRAP.md`" + ` 文件。这意味着你应该引导用户完成引导流程，以建立你的身份和偏好。
+
+**你的任务：**
+1. 阅读 BOOTSTRAP.md 文件，友好地表示初次见面，引导用户完成引导流程。
+2. 按照BOOTSTRAP.md 里面的指示执行。例如，帮助用户定义你的身份、他们的偏好，并建立工作关系
+3. 按照指南中的描述创建和更新必要的文件（PROFILE.md、MEMORY.md 等）
+4. 完成引导流程后，按照指示删除 BOOTSTRAP.md
+
+**如果用户希望跳过：**
+如果用户明确表示想跳过引导，那就继续回答下面的原始问题。你随时可以帮助他们完成引导。
+
+**用户的原始消息：`
 	default:
-		return `This is your first boot. Please read the BOOTSTRAP.md file in your working directory and follow its instructions to complete self-introduction and initial setup. Write the result to PROFILE.md.`
+		return `# 🌟 BOOTSTRAP MODE ACTIVATED
+
+**IMPORTANT: You are in first-time setup mode.**
+
+A ` + "`BOOTSTRAP.md`" + ` file exists in your working directory. This means you should guide the user through the bootstrap process to establish your identity and preferences.
+
+**Your task:**
+1. Read the BOOTSTRAP.md file, greet the user warmly as a first meeting, and guide them through the bootstrap process.
+2. Follow the instructions in BOOTSTRAP.md. For example, help the user define your identity, their preferences, and establish the working relationship.
+3. Create and update the necessary files (PROFILE.md, MEMORY.md, etc.) as described in the guide.
+4. After completing the bootstrap process, delete BOOTSTRAP.md as instructed.
+
+**If the user wants to skip:**
+If the user explicitly says they want to skip the bootstrap or just want their question answered directly, then proceed to answer their original question below. You can always help them bootstrap later.
+
+**Original user message:`
+	}
+}
+
+// DynamicSkillHook injects relevant skill content based on the last user message.
+// It replaces the static system prompt with one containing dynamically selected skills.
+func DynamicSkillHook(provider SkillContentProvider) Hook {
+	return func(ctx context.Context, agent *ReactAgent, chatID string, messages []Message) ([]Message, error) {
+		// Find the last user message
+		var lastUserMsg string
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "user" {
+				lastUserMsg = messages[i].Content
+				break
+			}
+		}
+
+		if lastUserMsg == "" {
+			return messages, nil
+		}
+
+		// Get relevant skill content
+		skillContent := provider(lastUserMsg)
+		if skillContent == "" {
+			return messages, nil
+		}
+
+		// Find and update the system message
+		for i := range messages {
+			if messages[i].Role == "system" {
+				// Check if we need to add skills section
+				baseContent := messages[i].Content
+				if !strings.Contains(baseContent, "# Active Skills") && skillContent != "" {
+					messages[i].Content = baseContent + "\n\n# Active Skills\n\n" + skillContent
+					logger.L().Debug("DynamicSkillHook: added skills to system prompt",
+						zap.Int("skillContentLen", len(skillContent)),
+						zap.Int("queryLen", len(lastUserMsg)))
+				}
+				break
+			}
+		}
+
+		return messages, nil
 	}
 }

@@ -186,11 +186,12 @@ func ExpandPath(p string) string {
 
 // GetDefaultBinDir returns the default directory for bundled binaries.
 func GetDefaultBinDir() string {
-	home, err := os.UserHomeDir()
+	// Return absolute path to ./bin for consistent behavior
+	abs, err := filepath.Abs("./bin")
 	if err != nil {
-		return ".gopherpaw/bin"
+		return "./bin"
 	}
-	return filepath.Join(home, ".gopherpaw", "bin")
+	return abs
 }
 
 // runCommand executes a command and returns its output.

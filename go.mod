@@ -3,12 +3,14 @@ module github.com/suifei/gopherpaw
 go 1.25.0
 
 require (
+	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/chromedp/cdproto v0.0.0-20250803210736-d308e07a266d
 	github.com/chromedp/chromedp v0.14.2
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/gorilla/websocket v1.4.2
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
-	github.com/kuhahalong/ddgsearch v0.0.0-20241205095054-d297f4189b6e
+	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sashabaranov/go-openai v1.28.0
 	github.com/spf13/cobra v1.10.2
@@ -19,7 +21,6 @@ require (
 )
 
 require (
-	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/gen2brain/shm v0.1.0 // indirect
@@ -29,7 +30,6 @@ require (
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.4.0 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
@@ -37,7 +37,6 @@ require (
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
-	github.com/pkoukk/tiktoken-go v0.1.8 // indirect
 	github.com/sagikazarmark/locafero v0.4.0 // indirect
 	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/sourcegraph/conc v0.3.0 // indirect

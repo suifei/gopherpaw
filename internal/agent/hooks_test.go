@@ -145,18 +145,79 @@ func TestEstimateMessageTokens(t *testing.T) {
 	}
 }
 
-func TestBuildBootstrapGuidance(t *testing.T) {
-	zh := BuildBootstrapGuidance("zh")
-	if zh == "" {
+func TestBuildBootstrapGuidance_Zh(t *testing.T) {
+	guidance := BuildBootstrapGuidance("zh")
+
+	// 验证关键元素存在
+	if guidance == "" {
 		t.Error("expected non-empty zh guidance")
 	}
-	en := BuildBootstrapGuidance("en")
-	if en == "" {
+	// 检查引导模式激活标识
+	if !contains(guidance, "引导模式已激活") {
+		t.Error("missing bootstrap mode activation")
+	}
+	// 检查 BOOTSTRAP.md 引用
+	if !contains(guidance, "BOOTSTRAP.md") {
+		t.Error("missing BOOTSTRAP.md reference")
+	}
+	// 检查 PROFILE.md 引用
+	if !contains(guidance, "PROFILE.md") {
+		t.Error("missing PROFILE.md reference")
+	}
+	// 检查 MEMORY.md 引用
+	if !contains(guidance, "MEMORY.md") {
+		t.Error("missing MEMORY.md reference")
+	}
+	// 检查跳过机制说明
+	if !contains(guidance, "跳过") {
+		t.Error("missing skip instruction")
+	}
+	// 检查原始消息占位符
+	if !contains(guidance, "用户的原始消息") {
+		t.Error("missing original message placeholder")
+	}
+}
+
+func TestBuildBootstrapGuidance_En(t *testing.T) {
+	guidance := BuildBootstrapGuidance("en")
+
+	if guidance == "" {
 		t.Error("expected non-empty en guidance")
 	}
+	// 检查引导模式激活标识
+	if !contains(guidance, "BOOTSTRAP MODE ACTIVATED") {
+		t.Error("missing bootstrap mode activation")
+	}
+	// 检查跳过机制说明
+	if !contains(guidance, "skip") {
+		t.Error("missing skip instruction")
+	}
+	// 检查原始消息占位符
+	if !contains(guidance, "Original user message") {
+		t.Error("missing original message placeholder")
+	}
+}
+
+func TestBuildBootstrapGuidance_Different(t *testing.T) {
+	zh := BuildBootstrapGuidance("zh")
+	en := BuildBootstrapGuidance("en")
 	if zh == en {
 		t.Error("expected different guidance for zh and en")
 	}
+}
+
+// contains 是简单的字符串包含检查
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstr(s, substr))
+}
+
+func findSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func TestIsFirstUserInteraction(t *testing.T) {

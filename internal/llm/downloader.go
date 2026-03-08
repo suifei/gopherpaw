@@ -19,15 +19,11 @@ const (
 	SourceURL         = "url"
 )
 
-// DownloadModel downloads a model file to ~/.gopherpaw/models/.
+// DownloadModel downloads a model file to ./models/ (current directory).
 // For source=url: repoID is the direct file URL, backend is optional filename.
 // For HuggingFace/ModelScope: simplified impl uses direct URL; full API support TBD.
 func DownloadModel(ctx context.Context, repoID, source, backend string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
-	}
-	baseDir := filepath.Join(home, ".gopherpaw", "models")
+	baseDir := "./models"
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}
@@ -55,13 +51,9 @@ func DownloadModel(ctx context.Context, repoID, source, backend string) (string,
 	return downloadFile(ctx, url, baseDir, filename)
 }
 
-// DownloadFromURL downloads a file from the given URL to ~/.gopherpaw/models/.
+// DownloadFromURL downloads a file from the given URL to ./models/ (current directory).
 func DownloadFromURL(ctx context.Context, url string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
-	}
-	baseDir := filepath.Join(home, ".gopherpaw", "models")
+	baseDir := "./models"
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
 	}

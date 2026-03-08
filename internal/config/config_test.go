@@ -138,10 +138,13 @@ func TestResolveDBPath(t *testing.T) {
 }
 
 func TestResolveWorkingDir(t *testing.T) {
-	// Empty config dir -> should resolve to ~/.gopherpaw (or .gopherpaw if no home)
+	// Empty config dir -> should resolve to . (current directory)
 	got := ResolveWorkingDir("")
 	if got == "" {
 		t.Error("ResolveWorkingDir should not return empty")
+	}
+	if got != "." {
+		t.Errorf("ResolveWorkingDir default = %q, want \".\"", got)
 	}
 	// Explicit dir
 	got = ResolveWorkingDir("/tmp/test")
@@ -396,7 +399,7 @@ func TestAgentConfig_ResolveWorkingDir(t *testing.T) {
 		emptyHome    bool
 		wantContains string
 	}{
-		{"empty working dir", "", false, ".gopherpaw"},
+		{"empty working dir", "", false, ""}, // "." becomes an absolute path
 		{"relative path", "./data", false, "data"},
 		{"absolute path", "/tmp/test", false, "/tmp/test"},
 		{"tilde path", "~/test", false, "/test"},

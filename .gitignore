@@ -122,3 +122,12 @@ FINAL_TEST_REPORT.md
 PROJECT_COMPLETION_SUMMARY.md
 PROJECT_SUMMARY.md
 internal/runtime/bun.lock
+
+
+data/**/*
+CLAUDE.md
+docs/autopilot-execution-report.md
+docs/browser-detection-improvements.md
+docs/browser-setup-skill-implementation.md
+docs/contract-update-log.md
+docs/docker-volume-mapping-log.md

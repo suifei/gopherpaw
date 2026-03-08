@@ -22,7 +22,7 @@ func TestMemorySearchTool_NoStore(t *testing.T) {
 }
 
 func TestMemorySearchTool_NoChatID(t *testing.T) {
-	store := memory.New(config.MemoryConfig{})
+	store := memory.New(config.MemoryConfig{}, nil)
 	ctx := agent.WithMemoryStore(context.Background(), store)
 	tool := &MemorySearchTool{}
 	result, err := tool.Execute(ctx, `{"query":"test"}`)
@@ -36,7 +36,7 @@ func TestMemorySearchTool_NoChatID(t *testing.T) {
 
 func TestMemorySearchTool_Search(t *testing.T) {
 	cfg := config.MemoryConfig{MaxHistory: 50}
-	store := memory.New(cfg)
+	store := memory.New(cfg, nil)
 	ctx := agent.WithMemoryStore(agent.WithChatID(context.Background(), "c1"), store)
 	tool := &MemorySearchTool{}
 	_ = store.Save(ctx, "c1", agent.Message{Role: "user", Content: "deployment process"})

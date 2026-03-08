@@ -42,14 +42,14 @@
 # 其他常用环境变量
 # ============================================================================
 #
-# - GOPHERPAW_WORKING_DIR: 工作目录（默认 ~/.gopherpaw）
+# - GOPHERPAW_WORKING_DIR: 工作目录（默认 .，即当前目录）
 # - GOPHERPAW_SECRET_DIR: 密钥目录（默认 ~/.gopherpaw.secret）
 # - GOPHERPAW_LOG_LEVEL: 日志级别（debug/info/warn/error）
 # - GOPHERPAW_ENABLED_CHANNELS: 启用的渠道（逗号分隔）
 #
 
 # 工作目录：存储数据、技能、记忆等
-# 默认：~/.gopherpaw（可通过 GOPHERPAW_WORKING_DIR 覆盖）
+# 默认：.（当前目录，可通过 GOPHERPAW_WORKING_DIR 覆盖）
 working_dir: ""
 
 # 技能目录配置
@@ -65,12 +65,12 @@ runtime:
   python:
     # Path to Python virtual environment (recommended)
     # Create with: gopherpaw env setup
-    venv_path: "~/.gopherpaw/venv"
+    venv_path: "./venv"
     # Or explicitly specify Python interpreter (overrides venv_path)
     # interpreter: "/usr/bin/python3"
     # Auto-install missing Python packages when needed
     auto_install: true
-  
+
   node:
     # JavaScript runtime: "bun" (recommended) or "node"
     runtime: "bun"
@@ -80,6 +80,29 @@ runtime:
     # node_path: ""
     # Auto-install missing npm/bun packages when needed
     auto_install: true
+
+  browser:
+    # Chrome 可执行文件路径（可选）
+    # 如未设置，将自动扫描系统常见路径
+    # 可通过环境变量 CHROME_BIN 覆盖
+    chrome_path: ""
+    # Chromium 缓存目录（用于自动下载）
+    cache_dir: "./.gopherpaw/cache/chromium"
+    # 是否自动下载 Chromium（当系统没有浏览器时）
+    # 注意：此功能暂未实现，保留配置以供将来使用
+    auto_download: false
+
+# 区域设置（操作系统级别的语言和地区配置）
+# 这些设置会自动应用到所有网络请求和浏览器工具
+# - HTTP 请求自动添加 Accept-Language: zh-CN,zh;q=0.9,en;q=0.8
+# - 浏览器自动设置 lang=zh-CN 和对应的 User-Agent
+locale:
+  # 语言代码（格式：language-REGION，例如 zh-CN, en-US, ja-JP）
+  language: "zh-CN"
+  # 地区代码（ISO 3166-1 alpha-2，例如 CN, US, JP, GB）
+  region: "CN"
+  # 时区（IANA 时区数据库格式，例如 Asia/Shanghai, America/New_York）
+  timezone: "Asia/Shanghai"
 
 server:
   host: "0.0.0.0"
@@ -97,6 +120,16 @@ agent:
   running:
     max_turns: 20
     max_input_length: 131072
+    execution_mode: "react"  # 执行模式: "react" | "planning" | "auto"
+  planning:
+    # 规划-执行分离模式配置（实验性功能）
+    enabled: false              # 是否启用规划模式
+    execution_mode: "react"     # 覆盖 running.execution_mode: "react" | "planning" | "auto"
+    capability_cache_ttl: 24    # 能力缓存刷新间隔（小时）
+    ai_summary_enabled: true    # 是否启用 AI 能力总结
+    simple_task_threshold: 3    # 简单任务阈值（少于 N 个工具调用则用 ReAct）
+    confirm_plan: false         # 是否在规划前显示计划给用户确认
+    max_plan_steps: 20          # 最大计划步骤数
   system_prompt: |
     You are a helpful AI assistant with access to tools. Use them when appropriate.
 

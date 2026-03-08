@@ -29,15 +29,27 @@ type storedMessage struct {
 }
 
 // New creates a MemoryStore based on config. Backend "memory" uses in-memory storage.
-func New(cfg config.MemoryConfig) agent.MemoryStore {
+// llm may be nil for in-memory storage; required for persistent backends.
+func New(cfg config.MemoryConfig, llm agent.LLMProvider) agent.MemoryStore {
 	maxHist := cfg.MaxHistory
 	if maxHist <= 0 {
 		maxHist = 50
 	}
-	return &InMemoryStore{
-		history: make(map[string][]storedMessage),
-		cfg:     cfg,
-		maxHist: maxHist,
+
+	// 根据 backend 配置选择存储后端
+	switch cfg.Backend {
+	case "sqlite", "file", "full":
+		// 持久化存储
+		return NewFullMemoryStore(cfg, llm)
+	case "memory", "":
+		// 内存存储（默认）
+		fallthrough
+	default:
+		return &InMemoryStore{
+			history: make(map[string][]storedMessage),
+			cfg:     cfg,
+			maxHist: maxHist,
+		}
 	}
 }
 

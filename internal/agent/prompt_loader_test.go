@@ -294,11 +294,58 @@ func TestPromptLoader_BuildSystemPrompt_WithSkills(t *testing.T) {
 	skillsContent := "Available tools: search, browse"
 	prompt := loader.BuildSystemPrompt(skillsContent)
 
-	// Verify skills section header is present
-	if !strings.Contains(prompt, "# Active Skills") {
-		t.Error("missing Active Skills header")
+	// Verify new AI collaboration framework elements are present
+	if !strings.Contains(prompt, "# 🤝") && !strings.Contains(prompt, "# AI Collaboration Framework") && !strings.Contains(prompt, "# AI 智能协作框架") {
+		t.Error("missing AI collaboration framework section")
+	}
+	if !strings.Contains(prompt, "# 📋") && !strings.Contains(prompt, "# Available Capabilities") && !strings.Contains(prompt, "# 可用能力索引") {
+		t.Error("missing capabilities index section")
 	}
 	if !strings.Contains(prompt, skillsContent) {
 		t.Error("missing skills content")
+	}
+}
+
+// TestPromptLoader_BuildSystemPrompt_LoadOrder verifies the loading order is AGENTS → SOUL → PROFILE
+// to align with CoPaw's prompt.py behavior.
+func TestPromptLoader_BuildSystemPrompt_LoadOrder(t *testing.T) {
+	dir := t.TempDir()
+	loader := NewPromptLoader(dir, "fallback")
+
+	// Create required files
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("agents content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("soul content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "PROFILE.md"), []byte("profile content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := loader.BuildSystemPrompt("")
+
+	// Find positions of each header
+	agentsPos := strings.Index(prompt, "# AGENTS.md")
+	soulPos := strings.Index(prompt, "# SOUL.md")
+	profilePos := strings.Index(prompt, "# PROFILE.md")
+
+	// Verify all headers exist
+	if agentsPos == -1 {
+		t.Error("missing AGENTS.md header")
+	}
+	if soulPos == -1 {
+		t.Error("missing SOUL.md header")
+	}
+	if profilePos == -1 {
+		t.Error("missing PROFILE.md header")
+	}
+
+	// Verify order: AGENTS → SOUL → PROFILE
+	if agentsPos >= soulPos {
+		t.Errorf("AGENTS.md should come before SOUL.md (agentsPos=%d, soulPos=%d)", agentsPos, soulPos)
+	}
+	if soulPos >= profilePos {
+		t.Errorf("SOUL.md should come before PROFILE.md (soulPos=%d, profilePos=%d)", soulPos, profilePos)
 	}
 }

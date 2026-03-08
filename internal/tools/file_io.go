@@ -130,7 +130,9 @@ func (t *WriteFileTool) Name() string { return "write_file" }
 
 // Description returns a human-readable description.
 func (t *WriteFileTool) Description() string {
-	return "Create or overwrite a file. Relative paths resolve from working directory."
+	return "Create or overwrite a file. Relative paths resolve from working directory. " +
+		"⚠️ CRITICAL: Before using this tool for .docx/.xlsx/.pdf/.pptx files, " +
+		"FIRST check the Active Skills Index in the system prompt and use read_file to load the relevant skill."
 }
 
 // Parameters returns the JSON Schema.
