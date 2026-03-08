@@ -720,6 +720,30 @@ func (a *ReactAgent) compressMessages(ctx context.Context, messages []Message) (
 	recent := messages[len(messages)-keepRecent:]
 	systemPrompt := messages[0]
 
+	// 确保 recent 中包含至少一条 user 消息
+	// 如果 recent 中没有 user 消息，需要从 toCompress 中找回最近的 user 消息
+	// 这避免了压缩后的消息序列不符合 OpenAI API 格式要求（必须以 user 消息开头或包含 user 消息）
+	hasUserInRecent := false
+	for _, m := range recent {
+		if m.Role == "user" {
+			hasUserInRecent = true
+			break
+		}
+	}
+
+	if !hasUserInRecent && len(toCompress) > 0 {
+		// 从后向前查找最近的 user 消息
+		for i := len(toCompress) - 1; i >= 0; i-- {
+			if toCompress[i].Role == "user" {
+				// 将这条 user 消息及其之后的所有消息加入到 recent
+				recent = append(toCompress[i:], recent...)
+				// 更新 toCompress，只保留这条 user 消息之前的内容
+				toCompress = toCompress[:i]
+				break
+			}
+		}
+	}
+
 	// 如果需要压缩的内容不多，直接返回
 	if len(toCompress) < 4 {
 		return messages, nil

@@ -929,3 +929,142 @@ func (m *mockModelSwitcher) SlotNames() []string {
 func (m *mockModelSwitcher) HasCapability(cap string) bool {
 	return true
 }
+
+// ============================================================================
+// compressMessages Tests
+// ============================================================================
+
+func TestReactAgent_compressMessages_PreservesUserMessage(t *testing.T) {
+	llm := &mockLLM{
+		chatFunc: func(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+			return &ChatResponse{Content: "Summary: User asked about X and Y"}, nil
+		},
+	}
+	mem := &mockMemory{}
+	agent := NewReact(llm, mem, nil, config.AgentConfig{SystemPrompt: "You are helpful."})
+	ctx := context.Background()
+
+	// 构造一个消息序列：system -> user -> assistant -> tool -> user -> assistant -> tool -> assistant -> tool
+	// 最后 6 条消息是：user -> assistant -> tool -> assistant -> tool -> assistant
+	// 但这样仍然包含 user，需要更极端的情况
+	messages := []Message{
+		{Role: "system", Content: "You are helpful."},
+		{Role: "user", Content: "First question"},
+		{Role: "assistant", Content: "Let me search"},
+		{Role: "tool", Content: "Tool result 1"},
+		{Role: "user", Content: "Second question"},
+		{Role: "assistant", Content: "Searching again"},
+		{Role: "tool", Content: "Tool result 2"},
+		{Role: "assistant", Content: "Let me try something else"},
+		{Role: "tool", Content: "Tool result 3"},
+		// 以下 6 条消息都不包含 user
+		{Role: "assistant", Content: "Trying different approach"},
+		{Role: "tool", Content: "Tool result 4"},
+		{Role: "assistant", Content: "One more attempt"},
+		{Role: "tool", Content: "Tool result 5"},
+		{Role: "assistant", Content: "Final attempt"},
+		{Role: "tool", Content: "Tool result 6"},
+	}
+
+	compressed, err := agent.compressMessages(ctx, messages)
+	if err != nil {
+		t.Fatalf("compressMessages failed: %v", err)
+	}
+
+	// 验证压缩后的消息列表包含 user 消息
+	hasUser := false
+	for _, m := range compressed {
+		if m.Role == "user" {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		t.Error("Expected compressed messages to contain at least one user message, but found none")
+	}
+
+	// 验证第一条消息是 system
+	if compressed[0].Role != "system" {
+		t.Errorf("Expected first message to be system, got %s", compressed[0].Role)
+	}
+}
+
+func TestReactAgent_compressMessages_ShortHistory(t *testing.T) {
+	llm := &mockLLM{
+		chatFunc: func(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+			return &ChatResponse{Content: "Summary"}, nil
+		},
+	}
+	mem := &mockMemory{}
+	agent := NewReact(llm, mem, nil, config.AgentConfig{SystemPrompt: "You are helpful."})
+	ctx := context.Background()
+
+	// 短消息列表，不应触发压缩
+	messages := []Message{
+		{Role: "system", Content: "You are helpful."},
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there"},
+	}
+
+	compressed, err := agent.compressMessages(ctx, messages)
+	if err != nil {
+		t.Fatalf("compressMessages failed: %v", err)
+	}
+
+	// 短历史应该原样返回
+	if len(compressed) != len(messages) {
+		t.Errorf("Expected %d messages, got %d", len(messages), len(compressed))
+	}
+}
+
+func TestReactAgent_compressMessages_EmptySummary(t *testing.T) {
+	llm := &mockLLM{
+		chatFunc: func(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
+			// 返回空内容，模拟 LLM 压缩失败
+			return &ChatResponse{Content: ""}, nil
+		},
+	}
+	mem := &mockMemory{}
+	agent := NewReact(llm, mem, nil, config.AgentConfig{SystemPrompt: "You are helpful."})
+	ctx := context.Background()
+
+	// 构造较长的消息序列
+	messages := []Message{
+		{Role: "system", Content: "You are helpful."},
+		{Role: "user", Content: "Question 1"},
+		{Role: "assistant", Content: "Answer 1"},
+		{Role: "user", Content: "Question 2"},
+		{Role: "assistant", Content: "Answer 2"},
+		{Role: "user", Content: "Question 3"},
+		{Role: "assistant", Content: "Answer 3"},
+		{Role: "user", Content: "Question 4"},
+		{Role: "assistant", Content: "Answer 4"},
+		{Role: "user", Content: "Question 5"},
+		{Role: "assistant", Content: "Answer 5"},
+	}
+
+	compressed, err := agent.compressMessages(ctx, messages)
+	if err != nil {
+		t.Fatalf("compressMessages failed: %v", err)
+	}
+
+	// 空摘要时应该跳过压缩摘要，但保留消息结构
+	// 验证不包含只有前缀的空消息
+	for _, m := range compressed {
+		if m.Role == "system" && m.Content == "【对话历史摘要】" {
+			t.Error("Found empty summary message with only prefix")
+		}
+	}
+
+	// 验证包含 user 消息
+	hasUser := false
+	for _, m := range compressed {
+		if m.Role == "user" {
+			hasUser = true
+			break
+		}
+	}
+	if !hasUser {
+		t.Error("Expected messages to contain user message even when summary is empty")
+	}
+}
