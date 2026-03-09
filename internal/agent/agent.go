@@ -165,9 +165,6 @@ func (a *ReactAgent) Run(ctx context.Context, chatID string, message string) (st
 	log := logger.L()
 	reporter := getProgressReporter(ctx)
 
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
 	if chatID == "" {
 		return "", fmt.Errorf("chatID cannot be empty")
 	}
@@ -236,8 +233,19 @@ func (a *ReactAgent) runWithReAct(ctx context.Context, chatID string, message st
 	var pendingToolMessages []Message
 
 	for turn := 0; turn < maxTurns; turn++ {
+		// 检查上下文是否已取消，但返回友好响应而非错误
 		if err := ctx.Err(); err != nil {
-			return "", err
+			log.Warn("Context cancelled during ReAct loop", zap.Error(err))
+			// 如果已有工具结果，让 LLM 基于已有结果生成响应
+			if turn > 0 {
+				// 尝试生成最终响应
+				if finalContent == "" {
+					finalContent = "操作因超时中断，请稍后重试或使用其他方法。"
+				}
+				break
+			}
+			// 如果在第一轮就超时，返回提示
+			return "请求处理超时，请稍后重试。如果问题持续，请尝试简化您的请求。", nil
 		}
 
 		// Execute hooks before each turn
@@ -278,6 +286,15 @@ func (a *ReactAgent) runWithReAct(ctx context.Context, chatID string, message st
 		a.llmMu.RUnlock()
 		resp, err := provider.Chat(ctx, req)
 		if err != nil {
+			// 检查是否是上下文超时
+			if ctx.Err() != nil {
+				log.Warn("LLM chat cancelled due to context timeout", zap.Error(err))
+				// 如果已有工具结果，返回部分响应
+				if turn > 0 {
+					return "操作因超时中断。基于已执行的工具结果，请稍后重试或尝试其他方法。", nil
+				}
+				return "请求处理超时，请稍后重试。如果问题持续，请尝试简化您的请求。", nil
+			}
 			return "", fmt.Errorf("llm chat: %w", err)
 		}
 
